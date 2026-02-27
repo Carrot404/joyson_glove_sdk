@@ -29,8 +29,8 @@ C++ SDK for controlling Joyson exoskeleton glove hardware with LAF actuators, en
 - C++17 compiler (GCC 7+, Clang 5+)
 - CMake 3.16+
 - Linux (tested on Ubuntu 20.04+)
-- Optional: spdlog (for logging)
-- Optional: Google Test (for unit tests)
+- spdlog (required, for logging)
+- Google Test (required when `BUILD_TESTS=ON`, default ON)
 
 ## Installation
 

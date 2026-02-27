@@ -13,12 +13,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
 
 # Find dependencies
 find_package(Threads REQUIRED)
-find_package(spdlog QUIET)
-
-# If spdlog not found, use header-only mode
-if(NOT spdlog_FOUND)
-    message(STATUS "spdlog not found, will use header-only mode if available")
-endif()
+find_package(spdlog REQUIRED)
 
 # Source files
 set(SDK_SOURCES
@@ -44,11 +39,8 @@ target_include_directories(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
     PUBLIC
         Threads::Threads
+        spdlog::spdlog
 )
-
-if(spdlog_FOUND)
-    target_link_libraries(${PROJECT_NAME} PUBLIC spdlog::spdlog)
-endif()
 
 # Set library properties
 set_target_properties(${PROJECT_NAME} PROPERTIES
@@ -73,20 +65,16 @@ endif()
 # Tests
 option(BUILD_TESTS "Build unit tests" ON)
 if(BUILD_TESTS)
-    find_package(GTest QUIET)
-    if(GTest_FOUND)
-        enable_testing()
+    find_package(GTest REQUIRED)
+    enable_testing()
 
-        add_executable(test_protocol tests/test_protocol.cpp)
-        target_link_libraries(test_protocol ${PROJECT_NAME} GTest::GTest GTest::Main)
-        add_test(NAME test_protocol COMMAND test_protocol)
+    add_executable(test_protocol tests/test_protocol.cpp)
+    target_link_libraries(test_protocol ${PROJECT_NAME} GTest::GTest GTest::Main)
+    add_test(NAME test_protocol COMMAND test_protocol)
 
-        add_executable(test_udp_client tests/test_udp_client.cpp)
-        target_link_libraries(test_udp_client ${PROJECT_NAME} GTest::GTest GTest::Main)
-        add_test(NAME test_udp_client COMMAND test_udp_client)
-    else()
-        message(STATUS "GTest not found, skipping tests")
-    endif()
+    add_executable(test_udp_client tests/test_udp_client.cpp)
+    target_link_libraries(test_udp_client ${PROJECT_NAME} GTest::GTest GTest::Main)
+    add_test(NAME test_udp_client COMMAND test_udp_client)
 endif()
 
 # Installation
