@@ -151,9 +151,11 @@ Packet ProtocolCodec::encode_read_motor_status(uint8_t motor_id) {
     packet.command = CMD_READ_STATUS;
     packet.body.clear();  // No body for read command
 
-    // Calculate length and checksum
+    // Calculate length first (header + length + module + target + cmd + body + checksum + tail)
+    packet.length = 9;  // Minimum packet size without body
+
+    // Serialize with correct length to calculate checksum
     auto serialized = packet.serialize();
-    packet.length = static_cast<uint16_t>(serialized.size());
     packet.checksum = Packet::calculate_checksum(serialized);
 
     return packet;
@@ -170,9 +172,11 @@ Packet ProtocolCodec::encode_set_motor_mode(uint8_t motor_id, uint8_t mode) {
     packet.body.push_back(REG_MODE);
     write_uint16_le(packet.body, static_cast<uint16_t>(mode));
 
-    // Calculate length and checksum
+    // Calculate length first
+    packet.length = 9 + static_cast<uint16_t>(packet.body.size());
+
+    // Serialize with correct length to calculate checksum
     auto serialized = packet.serialize();
-    packet.length = static_cast<uint16_t>(serialized.size());
     packet.checksum = Packet::calculate_checksum(serialized);
 
     return packet;
@@ -189,9 +193,11 @@ Packet ProtocolCodec::encode_set_motor_position(uint8_t motor_id, uint16_t posit
     packet.body.push_back(REG_POSITION);
     write_uint16_le(packet.body, position);
 
-    // Calculate length and checksum
+    // Calculate length first
+    packet.length = 9 + static_cast<uint16_t>(packet.body.size());
+
+    // Serialize with correct length to calculate checksum
     auto serialized = packet.serialize();
-    packet.length = static_cast<uint16_t>(serialized.size());
     packet.checksum = Packet::calculate_checksum(serialized);
 
     return packet;
@@ -208,9 +214,11 @@ Packet ProtocolCodec::encode_set_motor_force(uint8_t motor_id, uint16_t force) {
     packet.body.push_back(REG_FORCE);
     write_uint16_le(packet.body, force);
 
-    // Calculate length and checksum
+    // Calculate length first
+    packet.length = 9 + static_cast<uint16_t>(packet.body.size());
+
+    // Serialize with correct length to calculate checksum
     auto serialized = packet.serialize();
-    packet.length = static_cast<uint16_t>(serialized.size());
     packet.checksum = Packet::calculate_checksum(serialized);
 
     return packet;
@@ -229,9 +237,11 @@ Packet ProtocolCodec::encode_set_motor_speed(uint8_t motor_id, uint16_t speed, u
     packet.body.push_back(REG_POSITION);
     write_uint16_le(packet.body, target_position);
 
-    // Calculate length and checksum
+    // Calculate length first
+    packet.length = 9 + static_cast<uint16_t>(packet.body.size());
+
+    // Serialize with correct length to calculate checksum
     auto serialized = packet.serialize();
-    packet.length = static_cast<uint16_t>(serialized.size());
     packet.checksum = Packet::calculate_checksum(serialized);
 
     return packet;
@@ -245,9 +255,11 @@ Packet ProtocolCodec::encode_read_all_encoders() {
     packet.command = 0x00;  // Read command
     packet.body.clear();
 
-    // Calculate length and checksum
+    // Calculate length first
+    packet.length = 9;
+
+    // Serialize with correct length to calculate checksum
     auto serialized = packet.serialize();
-    packet.length = static_cast<uint16_t>(serialized.size());
     packet.checksum = Packet::calculate_checksum(serialized);
 
     return packet;
@@ -261,9 +273,11 @@ Packet ProtocolCodec::encode_read_imu() {
     packet.command = 0x00;  // Read command
     packet.body.clear();
 
-    // Calculate length and checksum
+    // Calculate length first
+    packet.length = 9;
+
+    // Serialize with correct length to calculate checksum
     auto serialized = packet.serialize();
-    packet.length = static_cast<uint16_t>(serialized.size());
     packet.checksum = Packet::calculate_checksum(serialized);
 
     return packet;

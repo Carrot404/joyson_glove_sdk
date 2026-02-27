@@ -45,3 +45,6 @@ Thumbs.db
 # Backup files
 *.bak
 *.backup
+
+# Serena memory files
+.serena/

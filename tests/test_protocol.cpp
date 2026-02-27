@@ -1,5 +1,6 @@
 #include "joyson_glove/protocol.hpp"
 #include <gtest/gtest.h>
+#include <cstring>
 
 using namespace joyson_glove;
 
@@ -7,20 +8,22 @@ using namespace joyson_glove;
 TEST(ProtocolTest, PacketSerializeDeserialize) {
     Packet packet;
     packet.header = PACKET_HEADER;
-    packet.length = 15;
     packet.module_id = MODULE_MOTOR;
     packet.target = 1;
     packet.command = CMD_READ_STATUS;
     packet.body.clear();
     packet.tail = PACKET_TAIL;
 
-    // Calculate checksum
+    // Set length first (must be set before calculating checksum)
+    packet.length = 9;  // Minimum packet size without body
+
+    // Calculate checksum with correct length
     auto serialized = packet.serialize();
     packet.checksum = Packet::calculate_checksum(serialized);
 
-    // Serialize
+    // Serialize with correct length and checksum
     serialized = packet.serialize();
-    EXPECT_EQ(serialized.size(), 15);
+    EXPECT_EQ(serialized.size(), 9);  // Minimum packet size without body
     EXPECT_EQ(serialized[0], PACKET_HEADER);
     EXPECT_EQ(serialized[serialized.size() - 1], PACKET_TAIL);
 
