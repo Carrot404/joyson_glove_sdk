@@ -7,14 +7,13 @@ namespace joyson_glove {
 // Packet serialization
 std::vector<uint8_t> Packet::serialize() const {
     std::vector<uint8_t> data;
-    data.reserve(length);
+    data.reserve(8 + body.size());
 
     // Header
     data.push_back(header);
 
-    // Length (little-endian)
-    data.push_back(static_cast<uint8_t>(length & 0xFF));
-    data.push_back(static_cast<uint8_t>((length >> 8) & 0xFF));
+    // Length (1 byte)
+    data.push_back(length);
 
     // Module ID, Target, Command
     data.push_back(module_id);
@@ -24,9 +23,8 @@ std::vector<uint8_t> Packet::serialize() const {
     // Body
     data.insert(data.end(), body.begin(), body.end());
 
-    // Checksum (little-endian)
-    data.push_back(static_cast<uint8_t>(checksum & 0xFF));
-    data.push_back(static_cast<uint8_t>((checksum >> 8) & 0xFF));
+    // Checksum (1 byte)
+    data.push_back(checksum);
 
     // Tail
     data.push_back(tail);
@@ -36,7 +34,7 @@ std::vector<uint8_t> Packet::serialize() const {
 
 // Packet deserialization
 std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& data) {
-    if (data.size() < 9) {  // Minimum packet size: header(1) + length(2) + module(1) + target(1) + cmd(1) + checksum(2) + tail(1)
+    if (data.size() < 7) {  // Minimum packet size: header(1) + length(1) + module(1) + target(1) + cmd(1) + checksum(1) + tail(1)
         return std::nullopt;
     }
 
@@ -49,11 +47,12 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& data) {
         return std::nullopt;
     }
 
-    // Length
-    packet.length = data[idx] | (data[idx + 1] << 8);
-    idx += 2;
+    // Length (1 byte)
+    packet.length = data[idx++];
 
-    if (packet.length != data.size()) {
+    // Validate total length: should be data.size() - 5 (excluding header, length, module_id, checksum, tail)
+    size_t expected_total_length = packet.length + 5;
+    if (expected_total_length != data.size()) {
         return std::nullopt;
     }
 
@@ -63,14 +62,13 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& data) {
     packet.command = data[idx++];
 
     // Body (everything between command and checksum)
-    size_t body_size = data.size() - 9;  // Total - (header + length + module + target + cmd + checksum + tail)
+    size_t body_size = data.size() - 7;  // Total - (header + length + module + target + cmd + checksum + tail)
     packet.body.resize(body_size);
     std::copy(data.begin() + idx, data.begin() + idx + body_size, packet.body.begin());
     idx += body_size;
 
-    // Checksum
-    packet.checksum = data[idx] | (data[idx + 1] << 8);
-    idx += 2;
+    // Checksum (1 byte)
+    packet.checksum = data[idx++];
 
     // Tail
     packet.tail = data[idx++];
@@ -86,20 +84,30 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& data) {
     return packet;
 }
 
-// Calculate checksum
-uint16_t Packet::calculate_checksum(const std::vector<uint8_t>& data) {
+// Calculate outer checksum
+uint8_t Packet::calculate_checksum(const std::vector<uint8_t>& data) {
     uint32_t sum = 0;
-    // Sum all bytes except checksum and tail (last 3 bytes)
-    for (size_t i = 0; i < data.size() - 3; ++i) {
+    // Sum all bytes except checksum and tail (last 2 bytes)
+    for (size_t i = 0; i < data.size() - 2; ++i) {
         sum += data[i];
     }
-    return static_cast<uint16_t>(sum & 0xFFFF);
+    return static_cast<uint8_t>(sum & 0xFF);
+}
+
+// Calculate inner motor checksum (excluding motor header 0x55/0xAA and checksum)
+uint8_t Packet::calculate_motor_checksum(const std::vector<uint8_t>& inner_data) {
+    uint32_t sum = 0;
+    // Sum from offset 2 (skip header) to end-1 (skip checksum)
+    for (size_t i = 2; i < inner_data.size() - 1; ++i) {
+        sum += inner_data[i];
+    }
+    return static_cast<uint8_t>(sum & 0xFF);
 }
 
 // Validate checksum
 bool Packet::validate_checksum() const {
     auto serialized = serialize();
-    uint16_t calculated = calculate_checksum(serialized);
+    uint8_t calculated = calculate_checksum(serialized);
     return calculated == checksum;
 }
 
@@ -143,104 +151,204 @@ float ProtocolCodec::read_float_le(const std::vector<uint8_t>& data, size_t offs
     return value;
 }
 
-// Encode: Read motor status (15 bytes)
+// Encode: Read motor ID (0x10) - 16 bytes
+Packet ProtocolCodec::encode_read_motor_id(uint8_t motor_id) {
+    Packet packet;
+    packet.module_id = MODULE_ID;
+    packet.target = TARGET_MOTOR;
+    packet.command = CMD_READ_MOTOR_ID;
+
+    // Inner motor packet: [0x55 0xAA] [Len] [MotorID] [InstrType] [RegAddrLo] [RegAddrHi] [RegCount] [Checksum]
+    std::vector<uint8_t> inner;
+    inner.push_back(MOTOR_HEADER_REQ_1);  // 0x55
+    inner.push_back(MOTOR_HEADER_REQ_2);  // 0xAA
+    inner.push_back(0x04);                // Len = 4
+    inner.push_back(motor_id);            // Motor ID
+    inner.push_back(MOTOR_INSTR_READ_REG); // 0x31
+    inner.push_back(REG_MOTOR_ID);        // 0x16
+    inner.push_back(0x00);                // Reg addr high
+    inner.push_back(0x01);                // Reg count
+    inner.push_back(0x00);                // Placeholder for checksum
+
+    // Calculate inner checksum
+    inner.back() = Packet::calculate_motor_checksum(inner);
+
+    packet.body = inner;
+
+    // Calculate outer length: total_length - 5
+    packet.length = 2 + static_cast<uint8_t>(packet.body.size());  // target + cmd + body
+
+    // Serialize and calculate outer checksum
+    auto serialized = packet.serialize();
+    packet.checksum = Packet::calculate_checksum(serialized);
+
+    return packet;
+}
+
+// Encode: Read motor status (0x20) - 15 bytes
 Packet ProtocolCodec::encode_read_motor_status(uint8_t motor_id) {
     Packet packet;
-    packet.module_id = MODULE_MOTOR;
-    packet.target = motor_id;
+    packet.module_id = MODULE_ID;
+    packet.target = TARGET_MOTOR;
     packet.command = CMD_READ_STATUS;
-    packet.body.clear();  // No body for read command
 
-    // Calculate length first (header + length + module + target + cmd + body + checksum + tail)
-    packet.length = 9;  // Minimum packet size without body
+    // Inner motor packet: [0x55 0xAA] [Len] [MotorID] [InstrType] [RegAddrLo] [RegAddrHi] [Checksum]
+    std::vector<uint8_t> inner;
+    inner.push_back(MOTOR_HEADER_REQ_1);  // 0x55
+    inner.push_back(MOTOR_HEADER_REQ_2);  // 0xAA
+    inner.push_back(0x03);                // Len = 3
+    inner.push_back(motor_id);            // Motor ID
+    inner.push_back(MOTOR_INSTR_HOST_CMD); // 0x30
+    inner.push_back(0x00);                // Reg addr low
+    inner.push_back(0x00);                // Reg addr high
+    inner.push_back(0x00);                // Placeholder for checksum
 
-    // Serialize with correct length to calculate checksum
+    // Calculate inner checksum
+    inner.back() = Packet::calculate_motor_checksum(inner);
+
+    packet.body = inner;
+
+    // Calculate outer length
+    packet.length = 2 + static_cast<uint8_t>(packet.body.size());
+
+    // Serialize and calculate outer checksum
     auto serialized = packet.serialize();
     packet.checksum = Packet::calculate_checksum(serialized);
 
     return packet;
 }
 
-// Encode: Set motor mode (17 bytes)
+// Encode: Set motor mode (0x30) - 17 bytes
 Packet ProtocolCodec::encode_set_motor_mode(uint8_t motor_id, uint8_t mode) {
     Packet packet;
-    packet.module_id = MODULE_MOTOR;
-    packet.target = motor_id;
+    packet.module_id = MODULE_ID;
+    packet.target = TARGET_MOTOR;
     packet.command = CMD_SET_MODE;
 
-    // Body: register(1) + value(2)
-    packet.body.push_back(REG_MODE);
-    write_uint16_le(packet.body, static_cast<uint16_t>(mode));
+    // Inner motor packet: [0x55 0xAA] [Len] [MotorID] [CMD] [RegAddrLo] [RegAddrHi] [ModeLo] [ModeHi] [Checksum]
+    std::vector<uint8_t> inner;
+    inner.push_back(MOTOR_HEADER_REQ_1);  // 0x55
+    inner.push_back(MOTOR_HEADER_REQ_2);  // 0xAA
+    inner.push_back(0x05);                // Len = 5
+    inner.push_back(motor_id);            // Motor ID
+    inner.push_back(MOTOR_INSTR_READ_WRITE); // 0x32
+    inner.push_back(REG_MODE);            // 0x25
+    inner.push_back(0x00);                // Reg addr high
+    write_uint16_le(inner, static_cast<uint16_t>(mode));
+    inner.push_back(0x00);                // Placeholder for checksum
 
-    // Calculate length first
-    packet.length = 9 + static_cast<uint16_t>(packet.body.size());
+    // Calculate inner checksum
+    inner.back() = Packet::calculate_motor_checksum(inner);
 
-    // Serialize with correct length to calculate checksum
+    packet.body = inner;
+
+    // Calculate outer length
+    packet.length = 2 + static_cast<uint8_t>(packet.body.size());
+
+    // Serialize and calculate outer checksum
     auto serialized = packet.serialize();
     packet.checksum = Packet::calculate_checksum(serialized);
 
     return packet;
 }
 
-// Encode: Set motor position (17 bytes)
+// Encode: Set motor position (0x31) - 17 bytes
 Packet ProtocolCodec::encode_set_motor_position(uint8_t motor_id, uint16_t position) {
     Packet packet;
-    packet.module_id = MODULE_MOTOR;
-    packet.target = motor_id;
+    packet.module_id = MODULE_ID;
+    packet.target = TARGET_MOTOR;
     packet.command = CMD_SET_POSITION;
 
-    // Body: register(1) + value(2)
-    packet.body.push_back(REG_POSITION);
-    write_uint16_le(packet.body, position);
+    // Inner motor packet
+    std::vector<uint8_t> inner;
+    inner.push_back(MOTOR_HEADER_REQ_1);  // 0x55
+    inner.push_back(MOTOR_HEADER_REQ_2);  // 0xAA
+    inner.push_back(0x05);                // Len = 5
+    inner.push_back(motor_id);            // Motor ID
+    inner.push_back(MOTOR_INSTR_READ_WRITE); // 0x32
+    inner.push_back(REG_POSITION);        // 0x29
+    inner.push_back(0x00);                // Reg addr high
+    write_uint16_le(inner, position);
+    inner.push_back(0x00);                // Placeholder for checksum
 
-    // Calculate length first
-    packet.length = 9 + static_cast<uint16_t>(packet.body.size());
+    // Calculate inner checksum
+    inner.back() = Packet::calculate_motor_checksum(inner);
 
-    // Serialize with correct length to calculate checksum
+    packet.body = inner;
+
+    // Calculate outer length
+    packet.length = 2 + static_cast<uint8_t>(packet.body.size());
+
+    // Serialize and calculate outer checksum
     auto serialized = packet.serialize();
     packet.checksum = Packet::calculate_checksum(serialized);
 
     return packet;
 }
 
-// Encode: Set motor force (17 bytes)
+// Encode: Set motor force (0x33) - 17 bytes
 Packet ProtocolCodec::encode_set_motor_force(uint8_t motor_id, uint16_t force) {
     Packet packet;
-    packet.module_id = MODULE_MOTOR;
-    packet.target = motor_id;
+    packet.module_id = MODULE_ID;
+    packet.target = TARGET_MOTOR;
     packet.command = CMD_SET_FORCE;
 
-    // Body: register(1) + value(2)
-    packet.body.push_back(REG_FORCE);
-    write_uint16_le(packet.body, force);
+    // Inner motor packet
+    std::vector<uint8_t> inner;
+    inner.push_back(MOTOR_HEADER_REQ_1);  // 0x55
+    inner.push_back(MOTOR_HEADER_REQ_2);  // 0xAA
+    inner.push_back(0x05);                // Len = 5
+    inner.push_back(motor_id);            // Motor ID
+    inner.push_back(MOTOR_INSTR_READ_WRITE); // 0x32
+    inner.push_back(REG_FORCE);           // 0x27
+    inner.push_back(0x00);                // Reg addr high
+    write_uint16_le(inner, force);
+    inner.push_back(0x00);                // Placeholder for checksum
 
-    // Calculate length first
-    packet.length = 9 + static_cast<uint16_t>(packet.body.size());
+    // Calculate inner checksum
+    inner.back() = Packet::calculate_motor_checksum(inner);
 
-    // Serialize with correct length to calculate checksum
+    packet.body = inner;
+
+    // Calculate outer length
+    packet.length = 2 + static_cast<uint8_t>(packet.body.size());
+
+    // Serialize and calculate outer checksum
     auto serialized = packet.serialize();
     packet.checksum = Packet::calculate_checksum(serialized);
 
     return packet;
 }
 
-// Encode: Set motor speed (19 bytes)
+// Encode: Set motor speed (0x32) - 19 bytes
 Packet ProtocolCodec::encode_set_motor_speed(uint8_t motor_id, uint16_t speed, uint16_t target_position) {
     Packet packet;
-    packet.module_id = MODULE_MOTOR;
-    packet.target = motor_id;
+    packet.module_id = MODULE_ID;
+    packet.target = TARGET_MOTOR;
     packet.command = CMD_SET_SPEED;
 
-    // Body: speed_register(1) + speed(2) + position_register(1) + position(2)
-    packet.body.push_back(REG_SPEED);
-    write_uint16_le(packet.body, speed);
-    packet.body.push_back(REG_POSITION);
-    write_uint16_le(packet.body, target_position);
+    // Inner motor packet (longer body with speed + position)
+    std::vector<uint8_t> inner;
+    inner.push_back(MOTOR_HEADER_REQ_1);  // 0x55
+    inner.push_back(MOTOR_HEADER_REQ_2);  // 0xAA
+    inner.push_back(0x07);                // Len = 7
+    inner.push_back(motor_id);            // Motor ID
+    inner.push_back(MOTOR_INSTR_READ_WRITE); // 0x32
+    inner.push_back(REG_SPEED);           // 0x28
+    inner.push_back(0x00);                // Reg addr high
+    write_uint16_le(inner, speed);
+    write_uint16_le(inner, target_position);
+    inner.push_back(0x00);                // Placeholder for checksum
 
-    // Calculate length first
-    packet.length = 9 + static_cast<uint16_t>(packet.body.size());
+    // Calculate inner checksum
+    inner.back() = Packet::calculate_motor_checksum(inner);
 
-    // Serialize with correct length to calculate checksum
+    packet.body = inner;
+
+    // Calculate outer length
+    packet.length = 2 + static_cast<uint8_t>(packet.body.size());
+
+    // Serialize and calculate outer checksum
     auto serialized = packet.serialize();
     packet.checksum = Packet::calculate_checksum(serialized);
 
@@ -250,15 +358,18 @@ Packet ProtocolCodec::encode_set_motor_speed(uint8_t motor_id, uint16_t speed, u
 // Encode: Read all encoders (9 bytes)
 Packet ProtocolCodec::encode_read_all_encoders() {
     Packet packet;
-    packet.module_id = MODULE_ENCODER;
-    packet.target = 0x00;  // Read all channels
+    packet.module_id = MODULE_ID;
+    packet.target = TARGET_ENCODER;
     packet.command = 0x00;  // Read command
-    packet.body.clear();
 
-    // Calculate length first
-    packet.length = 9;
+    // Body: ADC_Index(1) + ADC_Channel(1)
+    packet.body.push_back(0xFF);  // ADC index = 0xFF (all)
+    packet.body.push_back(0xFF);  // ADC channel = 0xFF (all)
 
-    // Serialize with correct length to calculate checksum
+    // Calculate outer length
+    packet.length = 2 + static_cast<uint8_t>(packet.body.size());
+
+    // Serialize and calculate outer checksum
     auto serialized = packet.serialize();
     packet.checksum = Packet::calculate_checksum(serialized);
 
@@ -268,15 +379,15 @@ Packet ProtocolCodec::encode_read_all_encoders() {
 // Encode: Read IMU (7 bytes)
 Packet ProtocolCodec::encode_read_imu() {
     Packet packet;
-    packet.module_id = MODULE_IMU;
-    packet.target = 0x00;
+    packet.module_id = MODULE_ID;
+    packet.target = TARGET_IMU;
     packet.command = 0x00;  // Read command
     packet.body.clear();
 
-    // Calculate length first
-    packet.length = 9;
+    // Calculate outer length
+    packet.length = 2 + static_cast<uint8_t>(packet.body.size());
 
-    // Serialize with correct length to calculate checksum
+    // Serialize and calculate outer checksum
     auto serialized = packet.serialize();
     packet.checksum = Packet::calculate_checksum(serialized);
 
@@ -285,22 +396,33 @@ Packet ProtocolCodec::encode_read_imu() {
 
 // Parse: Motor status (25 bytes response)
 std::optional<MotorStatus> ProtocolCodec::parse_motor_status(const Packet& packet) {
-    if (packet.module_id != MODULE_MOTOR) {
+    if (packet.module_id != MODULE_ID || packet.target != TARGET_MOTOR) {
         return std::nullopt;
     }
 
-    // Expected body size: position(2) + velocity(2) + force(2) + mode(1) + state(1) = 8 bytes
-    if (packet.body.size() < 8) {
+    // Body contains inner motor response: [0xAA 0x55] [Len] [MotorID] [InstrType] [Reserved(2)] [Data...] [Checksum]
+    // Expected inner body size: header(2) + len(1) + motor_id(1) + instr(1) + reserved(2) + data(10) + checksum(1) = 18 bytes
+    if (packet.body.size() < 18) {
+        return std::nullopt;
+    }
+
+    // Verify inner motor response header
+    if (packet.body[0] != MOTOR_HEADER_RESP_1 || packet.body[1] != MOTOR_HEADER_RESP_2) {
         return std::nullopt;
     }
 
     MotorStatus status;
-    status.motor_id = packet.target;
-    status.position = read_uint16_le(packet.body, 0);
-    status.velocity = read_int16_le(packet.body, 2);
-    status.force = read_uint16_le(packet.body, 4);
-    status.mode = packet.body[6];
-    status.state = packet.body[7];
+    status.motor_id = packet.body[3];  // Motor ID at offset 3
+
+    // Data starts at offset 7 (after header(2) + len(1) + motor_id(1) + instr(1) + reserved(2))
+    size_t data_offset = 7;
+    status.target_position = read_uint16_le(packet.body, data_offset);
+    status.actual_position = read_uint16_le(packet.body, data_offset + 2);
+    status.actual_current = read_uint16_le(packet.body, data_offset + 4);
+    status.force_value = read_uint16_le(packet.body, data_offset + 6);
+    status.force_raw = read_uint16_le(packet.body, data_offset + 8);
+    status.temperature = packet.body[data_offset + 10];
+    status.fault_code = packet.body[data_offset + 11];
     status.timestamp = std::chrono::steady_clock::now();
 
     return status;
@@ -308,18 +430,18 @@ std::optional<MotorStatus> ProtocolCodec::parse_motor_status(const Packet& packe
 
 // Parse: Encoder data (39 bytes response)
 std::optional<EncoderData> ProtocolCodec::parse_encoder_data(const Packet& packet) {
-    if (packet.module_id != MODULE_ENCODER) {
+    if (packet.module_id != MODULE_ID || packet.target != TARGET_ENCODER) {
         return std::nullopt;
     }
 
-    // Expected body size: 16 floats * 4 bytes = 64 bytes
-    if (packet.body.size() < 64) {
+    // Expected body size: 16 channels * 2 bytes = 32 bytes
+    if (packet.body.size() < 32) {
         return std::nullopt;
     }
 
     EncoderData data;
     for (size_t i = 0; i < NUM_ENCODER_CHANNELS; ++i) {
-        data.voltages[i] = read_float_le(packet.body, i * 4);
+        data.adc_values[i] = read_uint16_le(packet.body, i * 2);
     }
     data.timestamp = std::chrono::steady_clock::now();
 
@@ -328,8 +450,8 @@ std::optional<EncoderData> ProtocolCodec::parse_encoder_data(const Packet& packe
 
 // Parse: IMU data (19 bytes response)
 std::optional<ImuData> ProtocolCodec::parse_imu_data(const Packet& packet) {
-    // Note: Firmware bug - response shows target 0x02 instead of 0x03, so we check module_id only
-    if (packet.module_id != MODULE_IMU) {
+    // Note: Firmware bug - response Target field may be incorrect, so we check module_id only
+    if (packet.module_id != MODULE_ID) {
         return std::nullopt;
     }
 
