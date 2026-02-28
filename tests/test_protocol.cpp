@@ -102,8 +102,14 @@ TEST(ProtocolTest, PacketWithMotorProtocolSerializeDeserialize) {
     EXPECT_EQ(serialized[9], MOTOR_INSTR_HOST_CMD);  // 0x30
     EXPECT_EQ(serialized[10], 0x00);  // Reg addr low
     EXPECT_EQ(serialized[11], 0x00);  // Reg addr high
-    
-    // Output checksum
+
+    // Verify motor checksum (Len + MotorID + Instr + RegLo + RegHi)
+    uint8_t expected_motor_checksum = (0x03 + motor_id + 0x30 + 0x00 + 0x00) & 0xFF;
+    EXPECT_EQ(serialized[12], expected_motor_checksum);  // Motor checksum
+    std::printf("Motor Checksum: 0x%02X (expected: 0x%02X)\n",
+                static_cast<unsigned char>(serialized[12]), expected_motor_checksum);
+
+    // Output outer checksum
     uint8_t checksum = serialized[serialized.size() - 2];
     std::printf("Checksum: 0x%02X (%u)\n", checksum, checksum);
     
@@ -156,6 +162,16 @@ TEST(ProtocolTest, EncodeReadMotorStatus) {
     EXPECT_FALSE(packet.body.empty());  // Contains inner motor protocol
 
     auto serialized = packet.serialize();
+    
+    // Output serialized packet bytes
+    std::cout << "\n=== EncodeReadMotorStatus Test ===" << std::endl;
+    std::cout << "Motor ID: " << static_cast<int>(motor_id) << std::endl;
+    std::cout << "Serialized bytes (" << serialized.size() << " total): ";
+    for (size_t i = 0; i < serialized.size(); ++i) {
+        std::printf("0x%02X ", static_cast<unsigned char>(serialized[i]));
+    }
+    std::cout << std::endl;
+    
     EXPECT_EQ(serialized.size(), 15);  // header(1) + length(1) + module(1) + target(1) + cmd(1) + body(8) + checksum(1) + tail(1)
 }
 
@@ -171,6 +187,16 @@ TEST(ProtocolTest, EncodeSetMotorMode) {
     EXPECT_FALSE(packet.body.empty());  // Contains inner motor protocol
 
     auto serialized = packet.serialize();
+    
+    // Output serialized packet bytes
+    std::cout << "\n=== EncodeSetMotorMode Test ===" << std::endl;
+    std::cout << "Motor ID: " << static_cast<int>(motor_id) << ", Mode: " << static_cast<int>(mode) << std::endl;
+    std::cout << "Serialized bytes (" << serialized.size() << " total): ";
+    for (size_t i = 0; i < serialized.size(); ++i) {
+        std::printf("0x%02X ", static_cast<unsigned char>(serialized[i]));
+    }
+    std::cout << std::endl;
+    
     EXPECT_EQ(serialized.size(), 17);  // With inner motor protocol
 }
 
@@ -186,6 +212,16 @@ TEST(ProtocolTest, EncodeSetMotorPosition) {
     EXPECT_FALSE(packet.body.empty());  // Contains inner motor protocol
 
     auto serialized = packet.serialize();
+    
+    // Output serialized packet bytes
+    std::cout << "\n=== EncodeSetMotorPosition Test ===" << std::endl;
+    std::cout << "Motor ID: " << static_cast<int>(motor_id) << ", Position: " << position << std::endl;
+    std::cout << "Serialized bytes (" << serialized.size() << " total): ";
+    for (size_t i = 0; i < serialized.size(); ++i) {
+        std::printf("0x%02X ", static_cast<unsigned char>(serialized[i]));
+    }
+    std::cout << std::endl;
+    
     EXPECT_EQ(serialized.size(), 17);  // With inner motor protocol
 }
 
@@ -201,6 +237,16 @@ TEST(ProtocolTest, EncodeSetMotorForce) {
     EXPECT_FALSE(packet.body.empty());  // Contains inner motor protocol
 
     auto serialized = packet.serialize();
+    
+    // Output serialized packet bytes
+    std::cout << "\n=== EncodeSetMotorForce Test ===" << std::endl;
+    std::cout << "Motor ID: " << static_cast<int>(motor_id) << ", Force: " << force << std::endl;
+    std::cout << "Serialized bytes (" << serialized.size() << " total): ";
+    for (size_t i = 0; i < serialized.size(); ++i) {
+        std::printf("0x%02X ", static_cast<unsigned char>(serialized[i]));
+    }
+    std::cout << std::endl;
+    
     EXPECT_EQ(serialized.size(), 17);  // With inner motor protocol
 }
 
@@ -217,6 +263,17 @@ TEST(ProtocolTest, EncodeSetMotorSpeed) {
     EXPECT_FALSE(packet.body.empty());  // Contains inner motor protocol
 
     auto serialized = packet.serialize();
+    
+    // Output serialized packet bytes
+    std::cout << "\n=== EncodeSetMotorSpeed Test ===" << std::endl;
+    std::cout << "Motor ID: " << static_cast<int>(motor_id) << ", Speed: " << speed 
+              << ", Target Position: " << target_position << std::endl;
+    std::cout << "Serialized bytes (" << serialized.size() << " total): ";
+    for (size_t i = 0; i < serialized.size(); ++i) {
+        std::printf("0x%02X ", static_cast<unsigned char>(serialized[i]));
+    }
+    std::cout << std::endl;
+    
     EXPECT_EQ(serialized.size(), 19);  // With inner motor protocol (longer body)
 }
 
@@ -228,6 +285,16 @@ TEST(ProtocolTest, EncodeReadAllEncoders) {
     EXPECT_EQ(packet.target, TARGET_ENCODER);
     EXPECT_EQ(packet.command, 0x00);
     EXPECT_EQ(packet.body.size(), 2);  // ADC_Index + ADC_Channel
+    
+    auto serialized = packet.serialize();
+    
+    // Output serialized packet bytes
+    std::cout << "\n=== EncodeReadAllEncoders Test ===" << std::endl;
+    std::cout << "Serialized bytes (" << serialized.size() << " total): ";
+    for (size_t i = 0; i < serialized.size(); ++i) {
+        std::printf("0x%02X ", static_cast<unsigned char>(serialized[i]));
+    }
+    std::cout << std::endl;
 }
 
 // Test encode_read_imu
@@ -238,6 +305,16 @@ TEST(ProtocolTest, EncodeReadImu) {
     EXPECT_EQ(packet.target, TARGET_IMU);
     EXPECT_EQ(packet.command, 0x00);
     EXPECT_TRUE(packet.body.empty());
+    
+    auto serialized = packet.serialize();
+    
+    // Output serialized packet bytes
+    std::cout << "\n=== EncodeReadImu Test ===" << std::endl;
+    std::cout << "Serialized bytes (" << serialized.size() << " total): ";
+    for (size_t i = 0; i < serialized.size(); ++i) {
+        std::printf("0x%02X ", static_cast<unsigned char>(serialized[i]));
+    }
+    std::cout << std::endl;
 }
 
 // Test parse_motor_status
@@ -280,6 +357,14 @@ TEST(ProtocolTest, ParseMotorStatus) {
     packet.body[18] = fault;
     packet.body[19] = 0x00;  // Checksum placeholder
 
+    // Output constructed packet bytes
+    std::cout << "\n=== ParseMotorStatus Test ===" << std::endl;
+    std::cout << "Constructed packet body (" << packet.body.size() << " bytes): ";
+    for (size_t i = 0; i < packet.body.size(); ++i) {
+        std::printf("0x%02X ", static_cast<unsigned char>(packet.body[i]));
+    }
+    std::cout << std::endl;
+    
     auto status = ProtocolCodec::parse_motor_status(packet);
     ASSERT_TRUE(status.has_value());
     EXPECT_EQ(status->motor_id, 1);
@@ -307,6 +392,14 @@ TEST(ProtocolTest, ParseEncoderData) {
         packet.body[offset + 0] = adc_value & 0xFF;
         packet.body[offset + 1] = (adc_value >> 8) & 0xFF;
     }
+
+    // Output constructed packet bytes
+    std::cout << "\n=== ParseEncoderData Test ===" << std::endl;
+    std::cout << "Constructed packet body (" << packet.body.size() << " bytes): ";
+    for (size_t i = 0; i < packet.body.size(); ++i) {
+        std::printf("0x%02X ", static_cast<unsigned char>(packet.body[i]));
+    }
+    std::cout << std::endl;
 
     auto data = ProtocolCodec::parse_encoder_data(packet);
     ASSERT_TRUE(data.has_value());
@@ -340,6 +433,15 @@ TEST(ProtocolTest, ParseImuData) {
     write_float(0, roll);
     write_float(4, pitch);
     write_float(8, yaw);
+
+    // Output constructed packet bytes
+    std::cout << "\n=== ParseImuData Test ===" << std::endl;
+    std::cout << "Constructed packet body (" << packet.body.size() << " bytes): ";
+    for (size_t i = 0; i < packet.body.size(); ++i) {
+        std::printf("0x%02X ", static_cast<unsigned char>(packet.body[i]));
+    }
+    std::cout << std::endl;
+    std::cout << "Expected values - Roll: " << roll << ", Pitch: " << pitch << ", Yaw: " << yaw << std::endl;
 
     auto data = ProtocolCodec::parse_imu_data(packet);
     ASSERT_TRUE(data.has_value());
