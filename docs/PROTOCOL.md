@@ -21,31 +21,47 @@
 所有数据包遵循统一的格式:
 
 ```
-+--------+--------+--------+--------+--------+--------+--------+--------+--------+
-| Header | Length | Length | Module | Target | Command|  Body  |Checksum|Checksum|  Tail  |
-|  (1B)  | Low(1B)| High(1B)|  ID(1B)|  (1B)  |  (1B)  | (N bytes)| Low(1B)| High(1B)|  (1B)  |
-+--------+--------+--------+--------+--------+--------+--------+--------+--------+
-  0xEE                                                                              0x7E
++--------+--------+--------+--------+--------+--------+--------+--------+
+| Header | Length | Module | Target | Command|  Body  |Checksum|  Tail  |
+|  (1B)  |  (1B)  | ID(1B) |  (1B)  |  (1B)  |(N bytes)|  (1B) |  (1B)  |
++--------+--------+--------+--------+--------+--------+--------+--------+
+  0xEE               0x01                                         0x7E
 ```
 
 **字段说明**:
 - **Header**: 固定值 `0xEE`
-- **Length**: 数据包总长度 (包括 Header 和 Tail),2 字节小端序
-- **Module ID**: 模块标识 (0x01=电机, 0x02=编码器, 0x03=IMU)
-- **Target**: 目标设备 ID (电机 ID 1-6, 传感器通常为 0x00)
+- **Length**: 从 Target 到 Body 末尾的数据字节数 (不含 Header、Length、Module ID、Checksum、Tail), 1 字节, 即数据包总长度 - 5
+- **Module ID**: 当前模块 ID, 通常为 `0x01`
+- **Target**: 板子上的模块标识
+  - `0x01` - 电机 (Motor)
+  - `0x02` - 编码器 ADC (Encoder)
+  - `0x03` - IMU
+  - `0x04` - LRA
 - **Command**: 命令码
 - **Body**: 命令参数或响应数据 (长度可变)
-- **Checksum**: 校验和,2 字节小端序 (所有字节累加和的低 16 位)
+- **Checksum**: 校验和, 1 字节
 - **Tail**: 固定值 `0x7E`
 
 ### 1.3 校验和计算
 
+**外层包校验和**:
+
 ```cpp
-uint16_t checksum = 0;
-for (size_t i = 0; i < packet_length - 3; ++i) {  // 不包括 checksum 和 tail
+uint8_t checksum = 0;
+for (size_t i = 0; i < packet_length - 2; ++i) {  // excluding checksum and tail
     checksum += packet[i];
 }
-checksum = checksum & 0xFFFF;  // 取低 16 位
+checksum = checksum & 0xFF;
+```
+
+**电缸内层包校验和** (不含帧头 0x55 0xAA):
+
+```cpp
+uint8_t motor_checksum = 0;
+for (size_t i = 2; i < inner_packet_length - 1; ++i) {  // excluding header(2B) and checksum
+    motor_checksum += inner_packet[i];
+}
+motor_checksum = motor_checksum & 0xFF;
 ```
 
 ---
@@ -54,21 +70,51 @@ checksum = checksum & 0xFFFF;  // 取低 16 位
 
 ### 2.1 模块信息
 
-- **Module ID**: `0x01`
-- **Target**: 电机 ID (1-6)
+- **Module ID**: `0x01` (固定)
+- **Target**: `0x01` (电机模块)
+- **Motor ID**: 1-6 (在内层电缸子协议中指定)
 
-### 2.2 命令列表
+### 2.2 电缸内层子协议
+
+电机命令的 Body 字段包含一个内嵌的电缸子协议数据包:
+
+**请求帧格式**:
+
+```
++--------+--------+--------+--------+--------+--------+--------+
+| Motor Header    |  Len   |Motor ID|  Data  | Motor  |
+|  0x55  |  0xAA  |  (1B)  |  (1B)  |(N bytes)|Checksum|
++--------+--------+--------+--------+--------+--------+
+```
+
+**响应帧格式**:
+
+```
++--------+--------+--------+--------+--------+--------+--------+
+| Motor Header    |  Len   |Motor ID|  Data  | Motor  |
+|  0xAA  |  0x55  |  (1B)  |  (1B)  |(N bytes)|Checksum|
++--------+--------+--------+--------+--------+--------+
+```
+
+**字段说明**:
+- **Motor Header**: 请求 `0x55 0xAA`, 响应 `0xAA 0x55`
+- **Len**: 从 Motor ID (不含) 到 Motor Checksum (不含) 的数据字节数
+- **Motor ID**: 电机编号 1-6
+- **Data**: 命令参数或响应数据 (长度可变)
+- **Motor Checksum**: 校验和 = (Len + Motor ID + Data) 累加和 & 0xFF
+
+### 2.3 命令列表
 
 | 命令码 | 命令名称 | 功能描述 |
 |--------|----------|----------|
-| 0x00   | READ_STATUS | 读取电机状态 |
-| 0x20   | READ_STATUS_ALT | 读取电机状态 (备用) |
+| 0x10   | READ_MOTOR_ID | 读取电机 ID |
+| 0x20   | READ_STATUS | 读取电机状态 |
 | 0x30   | SET_MODE | 设置电机模式 |
 | 0x31   | SET_POSITION | 设置目标位置 |
 | 0x32   | SET_SPEED | 设置速度和目标位置 |
 | 0x33   | SET_FORCE | 设置目标力 |
 
-### 2.3 电机模式
+### 2.4 电机模式
 
 | 模式值 | 模式名称 | 描述 |
 |--------|----------|------|
@@ -76,8 +122,10 @@ checksum = checksum & 0xFFFF;  // 取低 16 位
 | 0x01   | SERVO    | 伺服模式 (高频控制, ≥20ms 更新) |
 | 0x02   | SPEED    | 速度控制模式 |
 | 0x03   | FORCE    | 力控制模式 |
+| 0x04   | VOLTAGE  | 电压控制模式 |
+| 0x05   | SPEED_FORCE | 速度力控模式 |
 
-### 2.4 寄存器地址
+### 2.5 寄存器地址
 
 | 寄存器 | 地址 | 数据类型 | 范围 | 描述 |
 |--------|------|----------|------|------|
@@ -90,52 +138,121 @@ checksum = checksum & 0xFFFF;  // 取低 16 位
 
 ## 3. 命令详细说明
 
-### 3.1 读取电机状态 (0x00)
+### 3.0 读取电机 ID (0x10)
+
+**请求数据包** (16 字节):
+
+```
+Offset | Field       | Value     | Description
+-------|-------------|-----------|-------------
+0      | Header      | 0xEE      | 固定头
+1      | Length      | 0x0B      | 长度 (16 - 5 = 11)
+2      | Module ID   | 0x01      | 模块 ID
+3      | Target      | 0x01      | 电机模块
+4      | Command     | 0x10      | 读取电机 ID 命令
+5-6    | Motor Header| 0x55 0xAA | 电缸帧头
+7      | Motor Len   | 0x04      | 电缸数据长度
+8      | Motor ID    | 0x01-0x06 | 电机编号
+9      | Instr Type  | 0x31      | 指令类型
+10     | Reg Addr Lo | 0x16      | 寄存器地址 (低字节)
+11     | Reg Addr Hi | 0x00      | 寄存器地址 (高字节)
+12     | Reg Count   | 0x01      | 寄存器数量
+13     | Motor Chk   | XX        | 电缸校验和
+14     | Checksum    | XX        | 外层校验和
+15     | Tail        | 0x7E      | 固定尾
+```
+
+**示例 - 读取电机 1 ID**:
+
+```
+请求: EE 0B 01 01 10 55 AA 04 01 31 16 00 01 4D A4 7E
+      ^^          ^^ ^^       ^^ ^^ ^^ ^^^^^ ^^
+      头        Target Cmd  Len MotID 指令 寄存器  数量
+```
+
+**响应数据包** (15 字节):
+
+```
+Offset | Field       | Size | Type     | Description
+-------|-------------|------|----------|-------------
+0      | Header      | 1    | uint8_t  | 0xEE
+1      | Length      | 1    | uint8_t  | 0x0A (10)
+2      | Module ID   | 1    | uint8_t  | 0x01
+3-4    | Motor Header| 2    | uint8_t[]| 0xAA 0x55 (响应帧头)
+5      | Motor Len   | 1    | uint8_t  | 0x05
+6      | Motor ID    | 1    | uint8_t  | 电机编号
+7      | Instr Type  | 1    | uint8_t  | 0x31 (指令类型)
+8      | Reg Addr Lo | 1    | uint8_t  | 0x16 (寄存器地址低字节)
+9      | Reg Addr Hi | 1    | uint8_t  | 0x00 (寄存器地址高字节)
+10     | Reg Value Lo| 1    | uint8_t  | 寄存器数值 (低字节)
+11     | Reg Value Hi| 1    | uint8_t  | 寄存器数值 (高字节)
+12     | Motor Chk   | 1    | uint8_t  | 电缸校验和
+13     | Checksum    | 1    | uint8_t  | 外层校验和
+14     | Tail        | 1    | uint8_t  | 0x7E
+```
+
+**示例 - 读取电机 1 ID 响应** (假设寄存器值为 0x0001):
+
+```
+响应: EE 0A 01 AA 55 05 01 31 16 00 01 00 4E 94 7E
+      ^^       ^^^^^    ^^ ^^ ^^ ^^^^^ ^^^^^
+      头      响应帧头 MotID 指令 寄存器  数值=1
+```
+
+### 3.1 读取电机状态 (0x20)
 
 **请求数据包** (15 字节):
 
 ```
-Offset | Field    | Value | Description
--------|----------|-------|-------------
-0      | Header   | 0xEE  | 固定头
-1-2    | Length   | 0x0F 0x00 | 长度 15 (小端序)
-3      | Module   | 0x01  | 电机模块
-4      | Target   | 0x01-0x06 | 电机 ID
-5      | Command  | 0x00  | 读取状态命令
-6-7    | Body     | (空)  | 无参数
-8-9    | Checksum | XX XX | 校验和
-10     | Tail     | 0x7E  | 固定尾
+Offset | Field       | Value     | Description
+-------|-------------|-----------|-------------
+0      | Header      | 0xEE      | 固定头
+1      | Length      | 0x0A      | 长度 (15 - 5 = 10)
+2      | Module ID   | 0x01      | 模块 ID
+3      | Target      | 0x01      | 电机模块
+4      | Command     | 0x20      | 读取电机状态命令
+5-6    | Motor Header| 0x55 0xAA | 电缸帧头
+7      | Motor Len   | 0x03      | 电缸数据长度
+8      | Motor ID    | 0x01-0x06 | 电机编号
+9      | Instr Type  | 0x30      | 上位机指令
+10     | Reg Addr Lo | 0x00      | 寄存器地址 (低字节)
+11     | Reg Addr Hi | 0x00      | 寄存器地址 (高字节)
+12     | Motor Chk   | XX        | 电缸校验和
+13     | Checksum    | XX        | 外层校验和
+14     | Tail        | 0x7E      | 固定尾
 ```
 
 **响应数据包** (25 字节):
 
 ```
-Offset | Field    | Size | Type    | Description
--------|----------|------|---------|-------------
-0      | Header   | 1    | uint8_t | 0xEE
-1-2    | Length   | 2    | uint16_t| 25
-3      | Module   | 1    | uint8_t | 0x01
-4      | Target   | 1    | uint8_t | 电机 ID
-5      | Command  | 1    | uint8_t | 0x00
-6-7    | Position | 2    | uint16_t| 当前位置 [0, 2000]
-8-9    | Velocity | 2    | int16_t | 当前速度 (steps/s)
-10-11  | Force    | 2    | uint16_t| 当前力 [0, 4095]
-12     | Mode     | 1    | uint8_t | 当前模式
-13     | State    | 1    | uint8_t | 状态标志
-14-15  | Checksum | 2    | uint16_t| 校验和
-16     | Tail     | 1    | uint8_t | 0x7E
+Offset | Field       | Size | Type     | Description
+-------|-------------|------|----------|-------------
+0      | Header      | 1    | uint8_t  | 0xEE
+1      | Length      | 1    | uint8_t  | 0x14 (20)
+2      | Module ID   | 1    | uint8_t  | 0x01
+3-4    | Motor Header| 2    | uint8_t[]| 0xAA 0x55 (响应帧头)
+5      | Motor Len   | 1    | uint8_t  | 0x0F (15)
+6      | Motor ID    | 1    | uint8_t  | 电机编号
+7      | Instr Type  | 1    | uint8_t  | 0x30 (指令类型)
+8-9    | Reserved    | 2    | uint8_t[]| 0x00 0x00 (保留帧)
+10-11  | Target Pos  | 2    | uint16_t | 目标位置 (小端序)
+12-13  | Actual Pos  | 2    | uint16_t | 实际位置 (小端序)
+14-15  | Actual Cur  | 2    | uint16_t | 实际电流 (小端序)
+16-17  | Force Value | 2    | uint16_t | 力传感器数值 (小端序)
+18-19  | Force Raw   | 2    | uint16_t | 力传感器原始值 (小端序)
+20     | Temperature | 1    | uint8_t  | 温度
+21     | Fault Code  | 1    | uint8_t  | 故障码
+22     | Motor Chk   | 1    | uint8_t  | 电缸校验和
+23     | Checksum    | 1    | uint8_t  | 外层校验和
+24     | Tail        | 1    | uint8_t  | 0x7E
 ```
 
-**示例**:
+**示例** (读取电机 1 状态):
 
 ```
-请求: EE 0F 00 01 01 00 00 00 7E
-      ^^       ^^    ^^
-      头       电机1  读状态
-
-响应: EE 19 00 01 01 00 E8 03 00 00 00 08 00 00 XX XX 7E
-                        ^^^^^ ^^^^^ ^^^^^ ^^ ^^
-                        位置  速度  力    模式 状态
+请求: EE 0A 01 01 20 55 AA 03 01 30 00 00 34 81 7E
+      ^^          ^^ ^^       ^^ ^^ ^^ ^^^^^
+      头        Target Cmd  Len MotID 指令 寄存器
 ```
 
 ### 3.2 设置电机模式 (0x30)
@@ -143,25 +260,65 @@ Offset | Field    | Size | Type    | Description
 **请求数据包** (17 字节):
 
 ```
-Offset | Field    | Value | Description
--------|----------|-------|-------------
-0      | Header   | 0xEE  | 固定头
-1-2    | Length   | 0x11 0x00 | 长度 17
-3      | Module   | 0x01  | 电机模块
-4      | Target   | 0x01-0x06 | 电机 ID
-5      | Command  | 0x30  | 设置模式命令
-6      | Register | 0x25  | 模式寄存器地址
-7-8    | Value    | XX XX | 模式值 (小端序)
-9-10   | Checksum | XX XX | 校验和
-11     | Tail     | 0x7E  | 固定尾
+Offset | Field       | Value     | Description
+-------|-------------|-----------|-------------
+0      | Header      | 0xEE      | 固定头
+1      | Length      | 0x0C      | 长度 (17 - 5 = 12)
+2      | Module ID   | 0x01      | 模块 ID
+3      | Target      | 0x01      | 电机模块
+4      | Command     | 0x30      | 设置模式命令
+5-6    | Motor Header| 0x55 0xAA | 电缸帧头
+7      | Motor Len   | 0x05      | 电缸数据长度
+8      | Motor ID    | 0x01-0x06 | 电机编号
+9      | CMD (R/W)   | 0x32      | 读写指令
+10     | Reg Addr Lo | 0x25      | 控制模式寄存器地址 (低字节)
+11     | Reg Addr Hi | 0x00      | 控制模式寄存器地址 (高字节)
+12     | Mode Lo     | XX        | 模式值 (低字节)
+13     | Mode Hi     | XX        | 模式值 (高字节)
+14     | Motor Chk   | XX        | 电缸校验和
+15     | Checksum    | XX        | 外层校验和
+16     | Tail        | 0x7E      | 固定尾
 ```
 
-**示例 - 设置电机 1 为伺服模式**:
+**模式值**:
+- `0x0000` - 位置控制模式 (POSITION)
+- `0x0001` - 伺服模式 (SERVO)
+- `0x0002` - 速度控制模式 (SPEED)
+- `0x0003` - 力控制模式 (FORCE)
+- `0x0004` - 电压控制模式 (VOLTAGE)
+- `0x0005` - 速度力控模式 (SPEED_FORCE)
+
+**响应数据包** (25 字节):
 
 ```
-请求: EE 11 00 01 01 30 25 01 00 XX XX 7E
-                        ^^ ^^^^^
-                        寄存器 模式=1
+Offset | Field       | Size | Type     | Description
+-------|-------------|------|----------|-------------
+0      | Header      | 1    | uint8_t  | 0xEE
+1      | Length      | 1    | uint8_t  | 0x14 (20)
+2      | Module ID   | 1    | uint8_t  | 0x01
+3-4    | Motor Header| 2    | uint8_t[]| 0xAA 0x55 (响应帧头)
+5      | Motor Len   | 1    | uint8_t  | 0x0F (15)
+6      | Motor ID    | 1    | uint8_t  | 电机编号
+7      | CMD (R/W)   | 1    | uint8_t  | 读写指令
+8-9    | Reg Addr    | 2    | uint16_t | 控制模式寄存器地址 (小端序)
+10-11  | Target Pos  | 2    | uint16_t | 目标位置 (小端序)
+12-13  | Actual Pos  | 2    | uint16_t | 实际位置 (小端序)
+14-15  | Actual Cur  | 2    | uint16_t | 实际电流 (小端序)
+16-17  | Force Value | 2    | uint16_t | 力传感器数值 (小端序)
+18-19  | Force Raw   | 2    | uint16_t | 力传感器原始值 (小端序)
+20     | Temperature | 1    | uint8_t  | 温度
+21     | Fault Code  | 1    | uint8_t  | 故障码
+22     | Motor Chk   | 1    | uint8_t  | 电缸校验和
+23     | Checksum    | 1    | uint8_t  | 外层校验和
+24     | Tail        | 1    | uint8_t  | 0x7E
+```
+
+**示例 - 设置电机 1 为位置控制模式**:
+
+```
+请求: EE 0C 01 01 30 55 AA 05 01 32 25 00 00 00 5D E5 7E
+      ^^          ^^ ^^       ^^ ^^ ^^ ^^^^^ ^^^^^
+      头        Target Cmd  Len MotID CMD 寄存器  模式=0
 ```
 
 ### 3.3 设置电机位置 (0x31)
@@ -169,25 +326,57 @@ Offset | Field    | Value | Description
 **请求数据包** (17 字节):
 
 ```
-Offset | Field    | Value | Description
--------|----------|-------|-------------
-0      | Header   | 0xEE  | 固定头
-1-2    | Length   | 0x11 0x00 | 长度 17
-3      | Module   | 0x01  | 电机模块
-4      | Target   | 0x01-0x06 | 电机 ID
-5      | Command  | 0x31  | 设置位置命令
-6      | Register | 0x29  | 位置寄存器地址
-7-8    | Position | XX XX | 目标位置 [0, 2000] (小端序)
-9-10   | Checksum | XX XX | 校验和
-11     | Tail     | 0x7E  | 固定尾
+Offset | Field       | Value     | Description
+-------|-------------|-----------|-------------
+0      | Header      | 0xEE      | 固定头
+1      | Length      | 0x0C      | 长度 (17 - 5 = 12)
+2      | Module ID   | 0x01      | 模块 ID
+3      | Target      | 0x01      | 电机模块
+4      | Command     | 0x31      | 设置位置命令
+5-6    | Motor Header| 0x55 0xAA | 电缸帧头
+7      | Motor Len   | 0x05      | 电缸数据长度
+8      | Motor ID    | 0x01-0x06 | 电机编号
+9      | CMD (R/W)   | 0x32      | 读写指令
+10     | Reg Addr Lo | 0x29      | 位置寄存器地址 (低字节)
+11     | Reg Addr Hi | 0x00      | 位置寄存器地址 (高字节)
+12     | Position Lo | XX        | 目标位置 (低字节) [0, 2000]
+13     | Position Hi | XX        | 目标位置 (高字节)
+14     | Motor Chk   | XX        | 电缸校验和
+15     | Checksum    | XX        | 外层校验和
+16     | Tail        | 0x7E      | 固定尾
 ```
 
-**示例 - 设置电机 2 到位置 1000**:
+**响应数据包** (25 字节):
 
 ```
-请求: EE 11 00 01 02 31 29 E8 03 XX XX 7E
-                        ^^ ^^^^^
-                        寄存器 位置=1000
+Offset | Field       | Size | Type     | Description
+-------|-------------|------|----------|-------------
+0      | Header      | 1    | uint8_t  | 0xEE
+1      | Length      | 1    | uint8_t  | 0x14 (20)
+2      | Module ID   | 1    | uint8_t  | 0x01
+3-4    | Motor Header| 2    | uint8_t[]| 0xAA 0x55 (响应帧头)
+5      | Motor Len   | 1    | uint8_t  | 0x0F (15)
+6      | Motor ID    | 1    | uint8_t  | 电机编号
+7      | CMD (R/W)   | 1    | uint8_t  | 读写指令
+8-9    | Reg Addr    | 2    | uint16_t | 位置寄存器地址 (小端序)
+10-11  | Target Pos  | 2    | uint16_t | 目标位置 (小端序)
+12-13  | Actual Pos  | 2    | uint16_t | 实际位置 (小端序)
+14-15  | Actual Cur  | 2    | uint16_t | 实际电流 (小端序)
+16-17  | Force Value | 2    | uint16_t | 力传感器数值 (小端序)
+18-19  | Force Raw   | 2    | uint16_t | 力传感器原始值 (小端序)
+20     | Temperature | 1    | uint8_t  | 温度
+21     | Fault Code  | 1    | uint8_t  | 故障码
+22     | Motor Chk   | 1    | uint8_t  | 电缸校验和
+23     | Checksum    | 1    | uint8_t  | 外层校验和
+24     | Tail        | 1    | uint8_t  | 0x7E
+```
+
+**示例 - 设置电机 1 到位置 1000**:
+
+```
+请求: EE 0C 01 01 31 55 AA 05 01 32 29 00 E8 03 4C C4 7E
+      ^^          ^^ ^^       ^^ ^^ ^^ ^^^^^ ^^^^^
+      头        Target Cmd  Len MotID CMD 寄存器 位置=1000
 ```
 
 ### 3.4 设置电机力 (0x33)
@@ -195,37 +384,119 @@ Offset | Field    | Value | Description
 **请求数据包** (17 字节):
 
 ```
-Offset | Field    | Value | Description
--------|----------|-------|-------------
-0      | Header   | 0xEE  | 固定头
-1-2    | Length   | 0x11 0x00 | 长度 17
-3      | Module   | 0x01  | 电机模块
-4      | Target   | 0x01-0x06 | 电机 ID
-5      | Command  | 0x33  | 设置力命令
-6      | Register | 0x27  | 力寄存器地址
-7-8    | Force    | XX XX | 目标力 [0, 4095] (小端序)
-9-10   | Checksum | XX XX | 校验和
-11     | Tail     | 0x7E  | 固定尾
+Offset | Field       | Value     | Description
+-------|-------------|-----------|-------------
+0      | Header      | 0xEE      | 固定头
+1      | Length      | 0x0C      | 长度 (17 - 5 = 12)
+2      | Module ID   | 0x01      | 模块 ID
+3      | Target      | 0x01      | 电机模块
+4      | Command     | 0x33      | 设置力命令
+5-6    | Motor Header| 0x55 0xAA | 电缸帧头
+7      | Motor Len   | 0x05      | 电缸数据长度
+8      | Motor ID    | 0x01-0x06 | 电机编号
+9      | CMD (R/W)   | 0x32      | 读写指令
+10     | Reg Addr Lo | 0x27      | 力寄存器地址 (低字节)
+11     | Reg Addr Hi | 0x00      | 力寄存器地址 (高字节)
+12     | Force Lo    | XX        | 目标力 (低字节) [0, 4095]
+13     | Force Hi    | XX        | 目标力 (高字节)
+14     | Motor Chk   | XX        | 电缸校验和
+15     | Checksum    | XX        | 外层校验和
+16     | Tail        | 0x7E      | 固定尾
 ```
 
-### 3.5 设置电机速度 (0x32)
+**响应数据包** (25 字节):
+
+```
+Offset | Field       | Size | Type     | Description
+-------|-------------|------|----------|-------------
+0      | Header      | 1    | uint8_t  | 0xEE
+1      | Length      | 1    | uint8_t  | 0x14 (20)
+2      | Module ID   | 1    | uint8_t  | 0x01
+3-4    | Motor Header| 2    | uint8_t[]| 0xAA 0x55 (响应帧头)
+5      | Motor Len   | 1    | uint8_t  | 0x0F (15)
+6      | Motor ID    | 1    | uint8_t  | 电机编号
+7      | CMD (R/W)   | 1    | uint8_t  | 读写指令
+8-9    | Reg Addr    | 2    | uint16_t | 力寄存器地址 (小端序)
+10-11  | Target Pos  | 2    | uint16_t | 目标位置 (小端序)
+12-13  | Actual Pos  | 2    | uint16_t | 实际位置 (小端序)
+14-15  | Actual Cur  | 2    | uint16_t | 实际电流 (小端序)
+16-17  | Force Value | 2    | uint16_t | 力传感器数值 (小端序)
+18-19  | Force Raw   | 2    | uint16_t | 力传感器原始值 (小端序)
+20     | Temperature | 1    | uint8_t  | 温度
+21     | Fault Code  | 1    | uint8_t  | 故障码
+22     | Motor Chk   | 1    | uint8_t  | 电缸校验和
+23     | Checksum    | 1    | uint8_t  | 外层校验和
+24     | Tail        | 1    | uint8_t  | 0x7E
+```
+
+**示例 - 设置电机 1 目标力为 2048**:
+
+```
+请求: EE 0C 01 01 33 55 AA 05 01 32 27 00 00 08 67 FC 7E
+      ^^          ^^ ^^       ^^ ^^ ^^ ^^^^^ ^^^^^
+      头        Target Cmd  Len MotID CMD 寄存器 力=2048
+```
+
+### 3.5 设置电机速度位置 (0x32)
 
 **请求数据包** (19 字节):
 
 ```
-Offset | Field    | Value | Description
--------|----------|-------|-------------
-0      | Header   | 0xEE  | 固定头
-1-2    | Length   | 0x13 0x00 | 长度 19
-3      | Module   | 0x01  | 电机模块
-4      | Target   | 0x01-0x06 | 电机 ID
-5      | Command  | 0x32  | 设置速度命令
-6      | Register1| 0x28  | 速度寄存器地址
-7-8    | Speed    | XX XX | 速度值 (小端序)
-9      | Register2| 0x29  | 位置寄存器地址
-10-11  | Position | XX XX | 目标位置 (小端序)
-12-13  | Checksum | XX XX | 校验和
-14     | Tail     | 0x7E  | 固定尾
+Offset | Field       | Value     | Description
+-------|-------------|-----------|-------------
+0      | Header      | 0xEE      | 固定头
+1      | Length      | 0x0E      | 长度 (19 - 5 = 14)
+2      | Module ID   | 0x01      | 模块 ID
+3      | Target      | 0x01      | 电机模块
+4      | Command     | 0x32      | 设置速度位置命令
+5-6    | Motor Header| 0x55 0xAA | 电缸帧头
+7      | Motor Len   | 0x07      | 电缸数据长度
+8      | Motor ID    | 0x01-0x06 | 电机编号
+9      | CMD (R/W)   | 0x32      | 读写指令
+10     | Reg Addr Lo | 0x28      | 速度寄存器地址 (低字节)
+11     | Reg Addr Hi | 0x00      | 速度寄存器地址 (高字节)
+12     | Speed Lo    | XX        | 目标速度 (低字节)
+13     | Speed Hi    | XX        | 目标速度 (高字节)
+14     | Position Lo | XX        | 目标位置 (低字节) [0, 2000]
+15     | Position Hi | XX        | 目标位置 (高字节)
+16     | Motor Chk   | XX        | 电缸校验和
+17     | Checksum    | XX        | 外层校验和
+18     | Tail        | 0x7E      | 固定尾
+```
+
+> **注意**: 速度模式需同时指定目标速度和目标位置，因此比其他设置命令多 2 字节。
+
+**响应数据包** (25 字节):
+
+```
+Offset | Field       | Size | Type     | Description
+-------|-------------|------|----------|-------------
+0      | Header      | 1    | uint8_t  | 0xEE
+1      | Length      | 1    | uint8_t  | 0x14 (20)
+2      | Module ID   | 1    | uint8_t  | 0x01
+3-4    | Motor Header| 2    | uint8_t[]| 0xAA 0x55 (响应帧头)
+5      | Motor Len   | 1    | uint8_t  | 0x0F (15)
+6      | Motor ID    | 1    | uint8_t  | 电机编号
+7      | CMD (R/W)   | 1    | uint8_t  | 读写指令
+8-9    | Reg Addr    | 2    | uint16_t | 速度寄存器地址 (小端序)
+10-11  | Target Pos  | 2    | uint16_t | 目标位置 (小端序)
+12-13  | Actual Pos  | 2    | uint16_t | 实际位置 (小端序)
+14-15  | Actual Cur  | 2    | uint16_t | 实际电流 (小端序)
+16-17  | Force Value | 2    | uint16_t | 力传感器数值 (小端序)
+18-19  | Force Raw   | 2    | uint16_t | 力传感器原始值 (小端序)
+20     | Temperature | 1    | uint8_t  | 温度
+21     | Fault Code  | 1    | uint8_t  | 故障码
+22     | Motor Chk   | 1    | uint8_t  | 电缸校验和
+23     | Checksum    | 1    | uint8_t  | 外层校验和
+24     | Tail        | 1    | uint8_t  | 0x7E
+```
+
+**示例 - 设置电机 1 速度 500, 位置 1000**:
+
+```
+请求: EE 0E 01 01 32 55 AA 07 01 32 28 00 F4 01 E8 03 42 B3 7E
+      ^^          ^^ ^^       ^^ ^^ ^^ ^^^^^ ^^^^^ ^^^^^
+      头        Target Cmd  Len MotID CMD 寄存器 速度=500 位置=1000
 ```
 
 ---
@@ -234,52 +505,58 @@ Offset | Field    | Value | Description
 
 ### 4.1 模块信息
 
-- **Module ID**: `0x02`
-- **Target**: `0x00` (读取所有通道)
+- **Module ID**: `0x01` (固定)
+- **Target**: `0x02` (编码器模块)
 
 ### 4.2 读取所有编码器 (0x00)
 
 **请求数据包** (9 字节):
 
 ```
-Offset | Field    | Value | Description
--------|----------|-------|-------------
-0      | Header   | 0xEE  | 固定头
-1-2    | Length   | 0x09 0x00 | 长度 9
-3      | Module   | 0x02  | 编码器模块
-4      | Target   | 0x00  | 所有通道
-5      | Command  | 0x00  | 读取命令
-6-7    | Checksum | XX XX | 校验和
-8      | Tail     | 0x7E  | 固定尾
+Offset | Field       | Value     | Description
+-------|-------------|-----------|-------------
+0      | Header      | 0xEE      | 固定头
+1      | Length      | 0x04      | 长度 (9 - 5 = 4)
+2      | Module ID   | 0x01      | 模块 ID
+3      | Target      | 0x02      | 编码器模块
+4      | Command     | 0x00      | 读取命令
+5      | ADC_Index   | 0xFF      | ADC 索引 (0xFF=全部)
+6      | ADC_Channel | 0xFF      | ADC 通道 (0xFF=全部)
+7      | Checksum    | XX        | 校验和
+8      | Tail        | 0x7E      | 固定尾
 ```
 
 **响应数据包** (39 字节):
 
 ```
-Offset | Field    | Size | Type    | Description
--------|----------|------|---------|-------------
-0      | Header   | 1    | uint8_t | 0xEE
-1-2    | Length   | 2    | uint16_t| 39
-3      | Module   | 1    | uint8_t | 0x02
-4      | Target   | 1    | uint8_t | 0x00
-5      | Command  | 1    | uint8_t | 0x00
-6-9    | CH0      | 4    | float   | 通道 0 电压 [0, 4V]
-10-13  | CH1      | 4    | float   | 通道 1 电压
-...    | ...      | ...  | ...     | ...
-70-73  | CH15     | 4    | float   | 通道 15 电压
-74-75  | Checksum | 2    | uint16_t| 校验和
-76     | Tail     | 1    | uint8_t | 0x7E
+Offset | Field       | Size | Type     | Description
+-------|-------------|------|----------|-------------
+0      | Header      | 1    | uint8_t  | 0xEE
+1      | Length      | 1    | uint8_t  | 0x22 (34) ⚠️ 见下方 BUG 说明
+2      | Module ID   | 1    | uint8_t  | 0x01
+3      | Target      | 1    | uint8_t  | 0x02 (编码器模块)
+4      | Command     | 1    | uint8_t  | 0x00
+5-6    | CH0         | 2    | uint16_t | 通道 0 ADC 值 (小端序)
+7-8    | CH1         | 2    | uint16_t | 通道 1 ADC 值
+9-10   | CH2         | 2    | uint16_t | 通道 2 ADC 值
+11-12  | CH3         | 2    | uint16_t | 通道 3 ADC 值
+13-14  | CH4         | 2    | uint16_t | 通道 4 ADC 值
+15-16  | CH5         | 2    | uint16_t | 通道 5 ADC 值
+17-18  | CH6         | 2    | uint16_t | 通道 6 ADC 值
+19-20  | CH7         | 2    | uint16_t | 通道 7 ADC 值
+21-22  | CH8         | 2    | uint16_t | 通道 8 ADC 值
+23-24  | CH9         | 2    | uint16_t | 通道 9 ADC 值
+25-26  | CH10        | 2    | uint16_t | 通道 10 ADC 值
+27-28  | CH11        | 2    | uint16_t | 通道 11 ADC 值
+29-30  | CH12        | 2    | uint16_t | 通道 12 ADC 值
+31-32  | CH13        | 2    | uint16_t | 通道 13 ADC 值
+33-34  | CH14        | 2    | uint16_t | 通道 14 ADC 值
+35-36  | CH15        | 2    | uint16_t | 通道 15 ADC 值
+37     | Checksum    | 1    | uint8_t  | 校验和
+38     | Tail        | 1    | uint8_t  | 0x7E
 ```
 
-**电压到角度转换**:
-
-```
-angle_degrees = (voltage / 4.0) * 360.0
-```
-
-其中:
-- 0V → 0°
-- 4V → 360°
+> ⚠️ **已知 BUG**: 固件返回的 Length 字段值错误，多加了 3。正确值应为 `0x22` (34)，实际返回 `0x25` (37)。解析时需注意此偏差，待固件修复。
 
 ---
 
@@ -287,43 +564,45 @@ angle_degrees = (voltage / 4.0) * 360.0
 
 ### 5.1 模块信息
 
-- **Module ID**: `0x03`
-- **Target**: `0x00`
+- **Module ID**: `0x01` (固定)
+- **Target**: `0x03` (IMU 模块)
 
 ### 5.2 读取 IMU 数据 (0x00)
 
 **请求数据包** (7 字节):
 
 ```
-Offset | Field    | Value | Description
--------|----------|-------|-------------
-0      | Header   | 0xEE  | 固定头
-1-2    | Length   | 0x07 0x00 | 长度 7
-3      | Module   | 0x03  | IMU 模块
-4      | Target   | 0x00  |
-5      | Command  | 0x00  | 读取命令
-6-7    | Checksum | XX XX | 校验和
-8      | Tail     | 0x7E  | 固定尾
+Offset | Field       | Value     | Description
+-------|-------------|-----------|-------------
+0      | Header      | 0xEE      | 固定头
+1      | Length      | 0x02      | 长度 (7 - 5 = 2)
+2      | Module ID   | 0x01      | 模块 ID
+3      | Target      | 0x03      | IMU 模块
+4      | Command     | 0x00      | 读取命令
+5      | Checksum    | XX        | 校验和
+6      | Tail        | 0x7E      | 固定尾
 ```
 
 **响应数据包** (19 字节):
 
 ```
-Offset | Field    | Size | Type    | Description
--------|----------|------|---------|-------------
-0      | Header   | 1    | uint8_t | 0xEE
-1-2    | Length   | 2    | uint16_t| 19
-3      | Module   | 1    | uint8_t | 0x03
-4      | Target   | 1    | uint8_t | 0x02 (固件 bug, 应为 0x03)
-5      | Command  | 1    | uint8_t | 0x00
-6-9    | Roll     | 4    | float   | 横滚角 (度)
-10-13  | Pitch    | 4    | float   | 俯仰角 (度)
-14-17  | Yaw      | 4    | float   | 偏航角 (度)
-18-19  | Checksum | 2    | uint16_t| 校验和
-20     | Tail     | 1    | uint8_t | 0x7E
+Offset | Field       | Size | Type     | Description
+-------|-------------|------|----------|-------------
+0      | Header      | 1    | uint8_t  | 0xEE
+1      | Length      | 1    | uint8_t  | 0x0E (14) ⚠️ 见下方 BUG 说明
+2      | Module ID   | 1    | uint8_t  | 0x01
+3      | Target      | 1    | uint8_t  | 0x03 (IMU 模块) ⚠️ 实际值可能不正确
+4      | Command     | 1    | uint8_t  | 0x00
+5-8    | Roll        | 4    | float    | 横滚角 (度)
+9-12   | Pitch       | 4    | float    | 俯仰角 (度)
+13-16  | Yaw         | 4    | float    | 偏航角 (度)
+17     | Checksum    | 1    | uint8_t  | 校验和
+18     | Tail        | 1    | uint8_t  | 0x7E
 ```
 
-**注意**: 固件存在 bug,响应中的 Target 字段显示为 `0x02` 而非 `0x03`,解析时应忽略此字段,仅检查 Module ID。
+> ⚠️ **已知 BUG (1)**: 固件返回的 Length 字段值错误，多加了 3。正确值应为 `0x0E` (14)，实际返回 `0x11` (17)。解析时需注意此偏差，待固件修复。
+>
+> ⚠️ **已知 BUG (2)**: 响应中的 Target 字段值不正确，解析时建议仅依据请求中的 Target 字段判断模块类型。
 
 ---
 
@@ -379,13 +658,15 @@ Offset | Field    | Size | Type    | Description
 
 ```
 1. 设置位置命令
-   发送: EE 11 00 01 01 31 29 E8 03 XX XX 7E
-   接收: EE 0D 00 01 01 31 XX XX 7E (确认)
+   发送: EE 0A 01 01 31 55 AA 03 01 29 E8 03 18 5A 7E
+         ^^    ^^ ^^ ^^                ^^ ^^ ^^^^^
+         头   Mod Tgt Cmd            MotID 寄存器 位置=1000
+   接收: EE XX 01 01 31 AA 55 XX XX ... XX XX 7E (确认)
 
 2. 读取状态命令
-   发送: EE 0F 00 01 01 00 XX XX 7E
-   接收: EE 19 00 01 01 00 E8 03 00 00 00 08 00 00 XX XX 7E
-         位置=1000 ^^^^^ 速度=0 ^^^^^ 力=2048 ^^^^^
+   发送: EE 07 01 01 00 55 AA 00 01 01 F8 7E
+   接收: EE 0F 01 01 00 AA 55 08 01 E8 03 00 00 00 08 00 00 FC F6 7E
+                              ^^^^^ 位置=1000 速度=0 力=2048
 ```
 
 ### 8.2 伺服模式示例
@@ -424,16 +705,22 @@ sudo wireshark -i eth0 -f "udp port 8080"
 ### 9.2 手动发送测试包
 
 ```bash
-# 使用 netcat 发送十六进制数据
-echo -ne '\xEE\x0F\x00\x01\x01\x00\x00\x00\x7E' | nc -u 192.168.10.123 8080
+# 使用 netcat 发送读取电机 1 状态命令
+echo -ne '\xEE\x07\x01\x01\x00\x55\xAA\x00\x01\x01\xF8\x7E' | nc -u 192.168.10.123 8080
 ```
 
 ### 9.3 校验和计算工具
 
 ```python
-def calculate_checksum(data):
-    checksum = sum(data[:-3]) & 0xFFFF
-    return checksum.to_bytes(2, 'little')
+def calculate_outer_checksum(data):
+    """Calculate outer packet checksum (excluding checksum and tail)"""
+    checksum = sum(data[:-2]) & 0xFF
+    return bytes([checksum])
+
+def calculate_motor_checksum(inner_data):
+    """Calculate inner motor packet checksum (excluding header 0x55/0xAA and checksum)"""
+    checksum = sum(inner_data[2:-1]) & 0xFF
+    return bytes([checksum])
 ```
 
 ---
@@ -447,5 +734,5 @@ def calculate_checksum(data):
 ---
 
 **版本**: 1.0
-**最后更新**: 2026-02-27
+**最后更新**: 2026-02-28
 **维护者**: Joyson Glove SDK Team
