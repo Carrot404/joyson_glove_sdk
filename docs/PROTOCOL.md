@@ -13,7 +13,10 @@
 - **传输协议**: UDP
 - **服务器地址**: 192.168.10.123
 - **服务器端口**: 8080
-- **字节序**: Little-Endian (小端序)
+- **字节序**: 混合字节序 (详见各模块说明)
+  - 电机数据 (uint16_t): Little-Endian
+  - 编码器 ADC 值 (uint16_t): **Big-Endian**
+  - IMU 浮点数 (float32): **Big-Endian**
 - **校验方式**: 累加和 (Sum Checksum)
 
 ### 1.2 数据包格式
@@ -536,22 +539,22 @@ Offset | Field       | Size | Type     | Description
 2      | Module ID   | 1    | uint8_t  | 0x01
 3      | Target      | 1    | uint8_t  | 0x02 (编码器模块)
 4      | Command     | 1    | uint8_t  | 0x00
-5-6    | CH0         | 2    | uint16_t | 通道 0 ADC 值 (小端序)
-7-8    | CH1         | 2    | uint16_t | 通道 1 ADC 值
-9-10   | CH2         | 2    | uint16_t | 通道 2 ADC 值
-11-12  | CH3         | 2    | uint16_t | 通道 3 ADC 值
-13-14  | CH4         | 2    | uint16_t | 通道 4 ADC 值
-15-16  | CH5         | 2    | uint16_t | 通道 5 ADC 值
-17-18  | CH6         | 2    | uint16_t | 通道 6 ADC 值
-19-20  | CH7         | 2    | uint16_t | 通道 7 ADC 值
-21-22  | CH8         | 2    | uint16_t | 通道 8 ADC 值
-23-24  | CH9         | 2    | uint16_t | 通道 9 ADC 值
-25-26  | CH10        | 2    | uint16_t | 通道 10 ADC 值
-27-28  | CH11        | 2    | uint16_t | 通道 11 ADC 值
-29-30  | CH12        | 2    | uint16_t | 通道 12 ADC 值
-31-32  | CH13        | 2    | uint16_t | 通道 13 ADC 值
-33-34  | CH14        | 2    | uint16_t | 通道 14 ADC 值
-35-36  | CH15        | 2    | uint16_t | 通道 15 ADC 值
+5-6    | CH0         | 2    | uint16_t | 通道 0 ADC 值 (大端序)
+7-8    | CH1         | 2    | uint16_t | 通道 1 ADC 值 (大端序)
+9-10   | CH2         | 2    | uint16_t | 通道 2 ADC 值 (大端序)
+11-12  | CH3         | 2    | uint16_t | 通道 3 ADC 值 (大端序)
+13-14  | CH4         | 2    | uint16_t | 通道 4 ADC 值 (大端序)
+15-16  | CH5         | 2    | uint16_t | 通道 5 ADC 值 (大端序)
+17-18  | CH6         | 2    | uint16_t | 通道 6 ADC 值 (大端序)
+19-20  | CH7         | 2    | uint16_t | 通道 7 ADC 值 (大端序)
+21-22  | CH8         | 2    | uint16_t | 通道 8 ADC 值 (大端序)
+23-24  | CH9         | 2    | uint16_t | 通道 9 ADC 值 (大端序)
+25-26  | CH10        | 2    | uint16_t | 通道 10 ADC 值 (大端序)
+27-28  | CH11        | 2    | uint16_t | 通道 11 ADC 值 (大端序)
+29-30  | CH12        | 2    | uint16_t | 通道 12 ADC 值 (大端序)
+31-32  | CH13        | 2    | uint16_t | 通道 13 ADC 值 (大端序)
+33-34  | CH14        | 2    | uint16_t | 通道 14 ADC 值 (大端序)
+35-36  | CH15        | 2    | uint16_t | 通道 15 ADC 值 (大端序)
 37     | Checksum    | 1    | uint8_t  | 校验和
 38     | Tail        | 1    | uint8_t  | 0x7E
 ```
@@ -593,9 +596,9 @@ Offset | Field       | Size | Type     | Description
 2      | Module ID   | 1    | uint8_t  | 0x01
 3      | Target      | 1    | uint8_t  | 0x03 (IMU 模块) ⚠️ 实际值可能不正确
 4      | Command     | 1    | uint8_t  | 0x00
-5-8    | Roll        | 4    | float    | 横滚角 (度)
-9-12   | Pitch       | 4    | float    | 俯仰角 (度)
-13-16  | Yaw         | 4    | float    | 偏航角 (度)
+5-8    | Roll        | 4    | float    | 横滚角 (度, 大端序)
+9-12   | Pitch       | 4    | float    | 俯仰角 (度, 大端序)
+13-16  | Yaw         | 4    | float    | 偏航角 (度, 大端序)
 17     | Checksum    | 1    | uint8_t  | 校验和
 18     | Tail        | 1    | uint8_t  | 0x7E
 ```

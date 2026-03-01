@@ -89,8 +89,11 @@ struct Packet {
     // Calculate inner motor checksum (excluding motor header and checksum)
     static uint8_t calculate_motor_checksum(const std::vector<uint8_t>& inner_data);
 
-    // Validate checksum
+    // Validate outer packet checksum
     bool validate_checksum() const;
+
+    // Check if body contains a motor inner packet and validate its checksum
+    bool validate_motor_checksum() const;
 };
 
 /**
@@ -151,11 +154,9 @@ public:
 private:
     // Helper functions for byte conversion
     static void write_uint16_le(std::vector<uint8_t>& data, uint16_t value);
-    static void write_int16_le(std::vector<uint8_t>& data, int16_t value);
-    static void write_float_le(std::vector<uint8_t>& data, float value);
     static uint16_t read_uint16_le(const std::vector<uint8_t>& data, size_t offset);
-    static int16_t read_int16_le(const std::vector<uint8_t>& data, size_t offset);
-    static float read_float_le(const std::vector<uint8_t>& data, size_t offset);
+    static uint16_t read_uint16_be(const std::vector<uint8_t>& data, size_t offset);
+    static float read_float_be(const std::vector<uint8_t>& data, size_t offset);
 };
 
 } // namespace joyson_glove

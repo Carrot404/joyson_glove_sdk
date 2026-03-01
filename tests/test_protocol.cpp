@@ -389,8 +389,8 @@ TEST(ProtocolTest, ParseEncoderData) {
     for (size_t i = 0; i < NUM_ENCODER_CHANNELS; ++i) {
         uint16_t adc_value = static_cast<uint16_t>(i * 256);  // 0, 256, 512, ...
         size_t offset = i * 2;
-        packet.body[offset + 0] = adc_value & 0xFF;
-        packet.body[offset + 1] = (adc_value >> 8) & 0xFF;
+        packet.body[offset + 0] = (adc_value >> 8) & 0xFF;
+        packet.body[offset + 1] = adc_value & 0xFF;
     }
 
     // Output constructed packet bytes
@@ -421,18 +421,19 @@ TEST(ProtocolTest, ParseImuData) {
     float pitch = -20.3f;
     float yaw = 180.0f;
 
-    auto write_float = [&](size_t offset, float value) {
+    // Write float in big-endian (matching IMU firmware byte order)
+    auto write_float_be = [&](size_t offset, float value) {
         uint32_t bits;
         std::memcpy(&bits, &value, sizeof(float));
-        packet.body[offset + 0] = bits & 0xFF;
-        packet.body[offset + 1] = (bits >> 8) & 0xFF;
-        packet.body[offset + 2] = (bits >> 16) & 0xFF;
-        packet.body[offset + 3] = (bits >> 24) & 0xFF;
+        packet.body[offset + 0] = (bits >> 24) & 0xFF;
+        packet.body[offset + 1] = (bits >> 16) & 0xFF;
+        packet.body[offset + 2] = (bits >> 8) & 0xFF;
+        packet.body[offset + 3] = bits & 0xFF;
     };
 
-    write_float(0, roll);
-    write_float(4, pitch);
-    write_float(8, yaw);
+    write_float_be(0, roll);
+    write_float_be(4, pitch);
+    write_float_be(8, yaw);
 
     // Output constructed packet bytes
     std::cout << "\n=== ParseImuData Test ===" << std::endl;

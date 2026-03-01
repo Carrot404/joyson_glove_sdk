@@ -76,8 +76,13 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& data) {
         return std::nullopt;
     }
 
-    // Validate checksum
+    // Validate outer checksum
     if (!packet.validate_checksum()) {
+        return std::nullopt;
+    }
+
+    // Validate inner motor checksum if body contains a motor packet
+    if (!packet.validate_motor_checksum()) {
         return std::nullopt;
     }
 
@@ -111,25 +116,29 @@ bool Packet::validate_checksum() const {
     return calculated == checksum;
 }
 
+// Check if body contains a motor inner packet and validate its checksum
+bool Packet::validate_motor_checksum() const {
+    // Motor inner packet requires at least: header(2) + len(1) + checksum(1) = 4 bytes
+    if (body.size() < 4) {
+        return true;  // Not a motor packet, skip validation
+    }
+
+    bool is_motor_request = (body[0] == MOTOR_HEADER_REQ_1 && body[1] == MOTOR_HEADER_REQ_2);
+    bool is_motor_response = (body[0] == MOTOR_HEADER_RESP_1 && body[1] == MOTOR_HEADER_RESP_2);
+
+    if (!is_motor_request && !is_motor_response) {
+        return true;  // Not a motor packet, skip validation
+    }
+
+    uint8_t expected = calculate_motor_checksum(body);
+    uint8_t actual = body.back();
+    return expected == actual;
+}
+
 // Helper: write uint16 little-endian
 void ProtocolCodec::write_uint16_le(std::vector<uint8_t>& data, uint16_t value) {
     data.push_back(static_cast<uint8_t>(value & 0xFF));
     data.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
-}
-
-// Helper: write int16 little-endian
-void ProtocolCodec::write_int16_le(std::vector<uint8_t>& data, int16_t value) {
-    write_uint16_le(data, static_cast<uint16_t>(value));
-}
-
-// Helper: write float little-endian
-void ProtocolCodec::write_float_le(std::vector<uint8_t>& data, float value) {
-    uint32_t bits;
-    std::memcpy(&bits, &value, sizeof(float));
-    data.push_back(static_cast<uint8_t>(bits & 0xFF));
-    data.push_back(static_cast<uint8_t>((bits >> 8) & 0xFF));
-    data.push_back(static_cast<uint8_t>((bits >> 16) & 0xFF));
-    data.push_back(static_cast<uint8_t>((bits >> 24) & 0xFF));
 }
 
 // Helper: read uint16 little-endian
@@ -137,15 +146,15 @@ uint16_t ProtocolCodec::read_uint16_le(const std::vector<uint8_t>& data, size_t 
     return data[offset] | (data[offset + 1] << 8);
 }
 
-// Helper: read int16 little-endian
-int16_t ProtocolCodec::read_int16_le(const std::vector<uint8_t>& data, size_t offset) {
-    return static_cast<int16_t>(read_uint16_le(data, offset));
+// Helper: read uint16 big-endian
+uint16_t ProtocolCodec::read_uint16_be(const std::vector<uint8_t>& data, size_t offset) {
+    return (data[offset] << 8) | data[offset + 1];
 }
 
-// Helper: read float little-endian
-float ProtocolCodec::read_float_le(const std::vector<uint8_t>& data, size_t offset) {
-    uint32_t bits = data[offset] | (data[offset + 1] << 8) |
-                    (data[offset + 2] << 16) | (data[offset + 3] << 24);
+// Helper: read float big-endian (IMU firmware sends floats in big-endian)
+float ProtocolCodec::read_float_be(const std::vector<uint8_t>& data, size_t offset) {
+    uint32_t bits = (data[offset] << 24) | (data[offset + 1] << 16) |
+                    (data[offset + 2] << 8) | data[offset + 3];
     float value;
     std::memcpy(&value, &bits, sizeof(float));
     return value;
@@ -441,7 +450,7 @@ std::optional<EncoderData> ProtocolCodec::parse_encoder_data(const Packet& packe
 
     EncoderData data;
     for (size_t i = 0; i < NUM_ENCODER_CHANNELS; ++i) {
-        data.adc_values[i] = read_uint16_le(packet.body, i * 2);
+        data.adc_values[i] = read_uint16_be(packet.body, i * 2);
     }
     data.timestamp = std::chrono::steady_clock::now();
 
@@ -461,9 +470,9 @@ std::optional<ImuData> ProtocolCodec::parse_imu_data(const Packet& packet) {
     }
 
     ImuData data;
-    data.roll = read_float_le(packet.body, 0);
-    data.pitch = read_float_le(packet.body, 4);
-    data.yaw = read_float_le(packet.body, 8);
+    data.roll = read_float_be(packet.body, 0);
+    data.pitch = read_float_be(packet.body, 4);
+    data.yaw = read_float_be(packet.body, 8);
     data.timestamp = std::chrono::steady_clock::now();
 
     return data;
