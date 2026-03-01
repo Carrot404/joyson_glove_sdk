@@ -53,6 +53,29 @@ bool UdpClient::connect() {
         return false;
     }
 
+    // Bind to local port if specified (required for hardware communication)
+    if (config_.local_port > 0) {
+        struct sockaddr_in local_addr;
+        std::memset(&local_addr, 0, sizeof(local_addr));
+        local_addr.sin_family = AF_INET;
+        local_addr.sin_addr.s_addr = INADDR_ANY;
+        local_addr.sin_port = htons(config_.local_port);
+
+        // Set SO_REUSEADDR to allow quick restart
+        int reuse = 1;
+        if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
+            std::cerr << "[UdpClient] Failed to set SO_REUSEADDR: " << strerror(errno) << std::endl;
+        }
+
+        if (bind(socket_fd_, reinterpret_cast<struct sockaddr*>(&local_addr), sizeof(local_addr)) < 0) {
+            std::cerr << "[UdpClient] Failed to bind to local port " << config_.local_port
+                      << ": " << strerror(errno) << std::endl;
+            close(socket_fd_);
+            socket_fd_ = -1;
+            return false;
+        }
+    }
+
     // Set socket timeouts
     if (!set_socket_timeout(socket_fd_, SO_RCVTIMEO, config_.receive_timeout)) {
         std::cerr << "[UdpClient] Failed to set receive timeout" << std::endl;

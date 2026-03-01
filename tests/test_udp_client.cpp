@@ -101,7 +101,7 @@ TEST(UdpClientTest, PacketSendWithoutServer) {
         Packet packet;
         packet.header = PACKET_HEADER;
         packet.length = 9;
-        packet.module_id = MODULE_MOTOR;
+        packet.module_id = MODULE_ID;
         packet.target = 1;
         packet.command = CMD_READ_STATUS;
         packet.tail = PACKET_TAIL;
@@ -166,7 +166,7 @@ TEST(UdpClientTest, SendAndReceiveTimeout) {
         Packet packet;
         packet.header = PACKET_HEADER;
         packet.length = 9;
-        packet.module_id = MODULE_MOTOR;
+        packet.module_id = MODULE_ID;
         packet.target = 1;
         packet.command = CMD_READ_STATUS;
         packet.tail = PACKET_TAIL;
@@ -222,7 +222,7 @@ TEST(UdpClientTest, ThreadSafety) {
                     Packet packet;
                     packet.header = PACKET_HEADER;
                     packet.length = 9;
-                    packet.module_id = MODULE_MOTOR;
+                    packet.module_id = MODULE_ID;
                     packet.target = static_cast<uint8_t>(i + 1);
                     packet.command = CMD_READ_STATUS;
                     packet.tail = PACKET_TAIL;
