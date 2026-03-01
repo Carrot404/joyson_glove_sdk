@@ -8,7 +8,6 @@
 #include <atomic>
 #include <mutex>
 #include <chrono>
-#include <string>
 
 namespace joyson_glove {
 
@@ -16,9 +15,14 @@ namespace joyson_glove {
  * Encoder calibration data
  */
 struct EncoderCalibration {
-    std::array<float, NUM_ENCODER_CHANNELS> zero_voltages;  // Zero-point voltages
-    std::array<float, NUM_ENCODER_CHANNELS> scale_factors;  // Scale factors (default 1.0)
+    std::array<float, NUM_ENCODER_CHANNELS> zero_voltages{};   // Zero-point voltages (default 0.0)
+    std::array<float, NUM_ENCODER_CHANNELS> scale_factors{};   // Scale factors (default 1.0)
     bool is_calibrated = false;
+
+    EncoderCalibration() {
+        zero_voltages.fill(0.0f);
+        scale_factors.fill(1.0f);
+    }
 };
 
 /**
@@ -26,8 +30,7 @@ struct EncoderCalibration {
  */
 struct EncoderReaderConfig {
     bool auto_start_thread = true;
-    std::chrono::milliseconds update_interval{10};  // 100Hz default
-    std::string calibration_file = "encoder_calibration.bin";
+    std::chrono::milliseconds update_interval{100};  // 10Hz default
 };
 
 /**
@@ -40,11 +43,11 @@ public:
                           const EncoderReaderConfig& config = EncoderReaderConfig{});
     ~EncoderReader();
 
-    // Disable copy, allow move
+    // Disable copy and move
     EncoderReader(const EncoderReader&) = delete;
     EncoderReader& operator=(const EncoderReader&) = delete;
-    EncoderReader(EncoderReader&&) noexcept;
-    EncoderReader& operator=(EncoderReader&&) noexcept;
+    EncoderReader(EncoderReader&&) = delete;
+    EncoderReader& operator=(EncoderReader&&) = delete;
 
     /**
      * Initialize encoder reader
@@ -64,10 +67,14 @@ public:
     /**
      * Check if update thread is running
      */
-    bool is_thread_running() const { return thread_running_.load(); }
+    bool is_thread_running() const { return thread_running_.load(std::memory_order_acquire); }
 
     /**
      * Read encoder voltages from hardware (blocking)
+     *
+     * WARNING: Do not call this method while the update thread is running,
+     * as concurrent send/receive on the UDP socket may cause response mismatch.
+     * Use get_cached_data() instead when the update thread is active.
      */
     std::optional<EncoderData> read_encoders();
 
@@ -75,6 +82,12 @@ public:
      * Get cached encoder data (non-blocking)
      */
     EncoderData get_cached_data() const;
+
+    /**
+     * Convert ADC values to voltages (16-bit ADC, 0-65535 -> 0-4V)
+     */
+    std::array<float, NUM_ENCODER_CHANNELS> adc_to_voltages(
+        const std::array<uint16_t, NUM_ENCODER_CHANNELS>& adc_values) const;
 
     /**
      * Convert voltages to angles (0V=0°, 4V=360°)
@@ -91,16 +104,6 @@ public:
      * Calibrate zero point (set current position as zero)
      */
     bool calibrate_zero_point();
-
-    /**
-     * Load calibration from file
-     */
-    bool load_calibration(const std::string& filename = "");
-
-    /**
-     * Save calibration to file
-     */
-    bool save_calibration(const std::string& filename = "") const;
 
     /**
      * Get calibration data
@@ -136,8 +139,12 @@ private:
     // Thread function
     void update_loop();
 
-    // Apply calibration to raw voltages
+    // Apply calibration to raw voltages (thread-safe)
     std::array<float, NUM_ENCODER_CHANNELS> apply_calibration(
+        const std::array<float, NUM_ENCODER_CHANNELS>& raw_voltages) const;
+
+    // Apply calibration without locking (caller must hold calibration_mutex_)
+    std::array<float, NUM_ENCODER_CHANNELS> apply_calibration_unsafe(
         const std::array<float, NUM_ENCODER_CHANNELS>& raw_voltages) const;
 };
 

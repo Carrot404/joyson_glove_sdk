@@ -1,64 +1,35 @@
 #include "joyson_glove/encoder_reader.hpp"
 #include <iostream>
-#include <fstream>
-#include <cstring>
 
 namespace joyson_glove {
 
 EncoderReader::EncoderReader(std::shared_ptr<UdpClient> udp_client,
                              const EncoderReaderConfig& config)
     : udp_client_(std::move(udp_client)), config_(config) {
-    // Initialize calibration with default values
-    calibration_.zero_voltages.fill(0.0f);
-    calibration_.scale_factors.fill(1.0f);
-    calibration_.is_calibrated = false;
-
-    // Initialize cached data
-    cached_data_.voltages.fill(0.0f);
+    // Initialize with default values
+    cached_data_.adc_values.fill(0);
     cached_data_.timestamp = std::chrono::steady_clock::now();
 }
 
 EncoderReader::~EncoderReader() {
-    stop_update_thread();
-}
-
-EncoderReader::EncoderReader(EncoderReader&& other) noexcept
-    : udp_client_(std::move(other.udp_client_)),
-      config_(std::move(other.config_)),
-      cached_data_(std::move(other.cached_data_)),
-      calibration_(std::move(other.calibration_)),
-      thread_running_(other.thread_running_.load()) {
-    other.thread_running_ = false;
-}
-
-EncoderReader& EncoderReader::operator=(EncoderReader&& other) noexcept {
-    if (this != &other) {
+    try {
         stop_update_thread();
-        udp_client_ = std::move(other.udp_client_);
-        config_ = std::move(other.config_);
-        cached_data_ = std::move(other.cached_data_);
-        calibration_ = std::move(other.calibration_);
-        thread_running_ = other.thread_running_.load();
-        other.thread_running_ = false;
+    } catch (...) {
+        // Swallow exceptions - destructors must not throw
     }
-    return *this;
 }
 
 bool EncoderReader::initialize() {
     std::cout << "[EncoderReader] Initializing..." << std::endl;
 
-    // Try to load calibration
-    if (!config_.calibration_file.empty()) {
-        load_calibration(config_.calibration_file);
-    }
-
-    // Read initial data
+    // Read initial data to verify hardware connectivity
     auto data = read_encoders();
     if (data) {
         std::lock_guard<std::mutex> lock(data_mutex_);
         cached_data_ = *data;
     } else {
         std::cerr << "[EncoderReader] Failed to read initial encoder data" << std::endl;
+        return false;
     }
 
     // Start background thread if configured
@@ -71,21 +42,27 @@ bool EncoderReader::initialize() {
 }
 
 void EncoderReader::start_update_thread() {
-    if (thread_running_.load()) {
+    if (thread_running_.load(std::memory_order_acquire)) {
         return;
     }
 
-    thread_running_ = true;
-    update_thread_ = std::thread(&EncoderReader::update_loop, this);
-    std::cout << "[EncoderReader] Update thread started" << std::endl;
+    thread_running_.store(true, std::memory_order_release);
+    try {
+        update_thread_ = std::thread(&EncoderReader::update_loop, this);
+        std::cout << "[EncoderReader] Update thread started" << std::endl;
+    } catch (const std::system_error& e) {
+        thread_running_.store(false, std::memory_order_release);
+        std::cerr << "[EncoderReader] Failed to start update thread: " << e.what() << std::endl;
+        throw;
+    }
 }
 
 void EncoderReader::stop_update_thread() {
-    if (!thread_running_.load()) {
+    if (!thread_running_.load(std::memory_order_acquire)) {
         return;
     }
 
-    thread_running_ = false;
+    thread_running_.store(false, std::memory_order_release);
     if (update_thread_.joinable()) {
         update_thread_.join();
     }
@@ -123,9 +100,25 @@ std::array<float, NUM_ENCODER_CHANNELS> EncoderReader::voltages_to_angles(
     return angles;
 }
 
+std::array<float, NUM_ENCODER_CHANNELS> EncoderReader::adc_to_voltages(
+    const std::array<uint16_t, NUM_ENCODER_CHANNELS>& adc_values) const {
+    std::array<float, NUM_ENCODER_CHANNELS> voltages;
+
+    // Convert 16-bit ADC values (0-65535) to voltages (0-4V)
+    constexpr float ADC_FULL_SCALE = 65536.0f;
+    constexpr float VOLTAGE_MAX = 4.0f;
+
+    for (size_t i = 0; i < NUM_ENCODER_CHANNELS; ++i) {
+        voltages[i] = static_cast<float>(adc_values[i]) * VOLTAGE_MAX / ADC_FULL_SCALE;
+    }
+
+    return voltages;
+}
+
 std::array<float, NUM_ENCODER_CHANNELS> EncoderReader::get_cached_angles() const {
     auto data = get_cached_data();
-    return voltages_to_angles(data.voltages);
+    auto voltages = adc_to_voltages(data.adc_values);
+    return voltages_to_angles(voltages);
 }
 
 bool EncoderReader::calibrate_zero_point() {
@@ -138,68 +131,18 @@ bool EncoderReader::calibrate_zero_point() {
         return false;
     }
 
-    // Set current voltages as zero point
-    std::lock_guard<std::mutex> lock(calibration_mutex_);
-    calibration_.zero_voltages = data->voltages;
+    // Set current voltages as zero point and update cached data atomically
+    std::scoped_lock lock(calibration_mutex_, data_mutex_);
+    auto voltages = adc_to_voltages(data->adc_values);
+    calibration_.zero_voltages = voltages;
     calibration_.scale_factors.fill(1.0f);
     calibration_.is_calibrated = true;
 
+    // Re-apply calibration to cached data so get_cached_data() reflects the new zero
+    cached_data_ = *data;
+
     std::cout << "[EncoderReader] Zero point calibration complete" << std::endl;
 
-    // Save calibration
-    if (!config_.calibration_file.empty()) {
-        save_calibration(config_.calibration_file);
-    }
-
-    return true;
-}
-
-bool EncoderReader::load_calibration(const std::string& filename) {
-    std::string file = filename.empty() ? config_.calibration_file : filename;
-
-    std::ifstream ifs(file, std::ios::binary);
-    if (!ifs) {
-        std::cerr << "[EncoderReader] Calibration file not found: " << file << std::endl;
-        return false;
-    }
-
-    EncoderCalibration cal;
-    ifs.read(reinterpret_cast<char*>(&cal.zero_voltages), sizeof(cal.zero_voltages));
-    ifs.read(reinterpret_cast<char*>(&cal.scale_factors), sizeof(cal.scale_factors));
-    ifs.read(reinterpret_cast<char*>(&cal.is_calibrated), sizeof(cal.is_calibrated));
-
-    if (!ifs) {
-        std::cerr << "[EncoderReader] Failed to read calibration file: " << file << std::endl;
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(calibration_mutex_);
-    calibration_ = cal;
-
-    std::cout << "[EncoderReader] Calibration loaded from " << file << std::endl;
-    return true;
-}
-
-bool EncoderReader::save_calibration(const std::string& filename) const {
-    std::string file = filename.empty() ? config_.calibration_file : filename;
-
-    std::ofstream ofs(file, std::ios::binary);
-    if (!ofs) {
-        std::cerr << "[EncoderReader] Failed to create calibration file: " << file << std::endl;
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(calibration_mutex_);
-    ofs.write(reinterpret_cast<const char*>(&calibration_.zero_voltages), sizeof(calibration_.zero_voltages));
-    ofs.write(reinterpret_cast<const char*>(&calibration_.scale_factors), sizeof(calibration_.scale_factors));
-    ofs.write(reinterpret_cast<const char*>(&calibration_.is_calibrated), sizeof(calibration_.is_calibrated));
-
-    if (!ofs) {
-        std::cerr << "[EncoderReader] Failed to write calibration file: " << file << std::endl;
-        return false;
-    }
-
-    std::cout << "[EncoderReader] Calibration saved to " << file << std::endl;
     return true;
 }
 
@@ -222,22 +165,31 @@ std::chrono::milliseconds EncoderReader::get_data_age() const {
 }
 
 void EncoderReader::update_loop() {
-    while (thread_running_.load()) {
+    int consecutive_failures = 0;
+
+    while (thread_running_.load(std::memory_order_acquire)) {
         auto start_time = std::chrono::steady_clock::now();
 
         // Read encoder data
         auto data = read_encoders();
         if (data) {
+            consecutive_failures = 0;
             std::lock_guard<std::mutex> lock(data_mutex_);
             cached_data_ = *data;
+        } else {
+            ++consecutive_failures;
+            if (consecutive_failures == 10 ||
+                (consecutive_failures > 0 && consecutive_failures % 100 == 0)) {
+                std::cerr << "[EncoderReader] WARNING: " << consecutive_failures
+                          << " consecutive read failures" << std::endl;
+            }
         }
 
-        // Sleep for remaining time to maintain update rate
-        auto elapsed = std::chrono::steady_clock::now() - start_time;
-        auto sleep_time = config_.update_interval -
-                         std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+        // Sleep for remaining interval without truncation loss
+        auto elapsed    = std::chrono::steady_clock::now() - start_time;
+        auto sleep_time = config_.update_interval - elapsed;
 
-        if (sleep_time.count() > 0) {
+        if (sleep_time > std::chrono::steady_clock::duration::zero()) {
             std::this_thread::sleep_for(sleep_time);
         }
     }
@@ -246,7 +198,11 @@ void EncoderReader::update_loop() {
 std::array<float, NUM_ENCODER_CHANNELS> EncoderReader::apply_calibration(
     const std::array<float, NUM_ENCODER_CHANNELS>& raw_voltages) const {
     std::lock_guard<std::mutex> lock(calibration_mutex_);
+    return apply_calibration_unsafe(raw_voltages);
+}
 
+std::array<float, NUM_ENCODER_CHANNELS> EncoderReader::apply_calibration_unsafe(
+    const std::array<float, NUM_ENCODER_CHANNELS>& raw_voltages) const {
     if (!calibration_.is_calibrated) {
         return raw_voltages;
     }

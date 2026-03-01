@@ -61,6 +61,9 @@ if(BUILD_EXAMPLES)
 
     add_executable(test_imu_reader examples/test_imu_reader.cpp)
     target_link_libraries(test_imu_reader ${PROJECT_NAME})
+
+    add_executable(test_encoder_reader examples/test_encoder_reader.cpp)
+    target_link_libraries(test_encoder_reader ${PROJECT_NAME})
 endif()
 
 # Tests
