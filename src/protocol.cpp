@@ -50,9 +50,27 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& data) {
     // Length (1 byte)
     packet.length = data[idx++];
 
+    // FIXME(firmware): IMU and Encoder responses have known length field bugs (3 bytes too large).
+    // Remove these workarounds once firmware fixes the length field.
+    //
+    // IMU response (raw bytes: EE 11 01 02):
+    //   Bug 1 - Length field returns 0x11, correct is 0x0E
+    //   Bug 2 - Target field is incorrect (returns 0x02, should be 0x03)
+    //   Bug 3 - Checksum is always 0x3A (not calculated correctly)
+    //
+    // Encoder response (raw bytes: EE 25 01 02):
+    //   Bug 1 - Length field returns 0x25, correct is 0x22
+    const bool is_imu_response = (data.size() >= 4 &&
+                                  data[0] == PACKET_HEADER && data[1] == 0x11 &&
+                                  data[2] == 0x01 && data[3] == 0x02);
+    const bool is_encoder_response = (data.size() >= 4 &&
+                                      data[0] == PACKET_HEADER && data[1] == 0x25 &&
+                                      data[2] == 0x01 && data[3] == 0x02);
+    const bool skip_length_check = is_imu_response || is_encoder_response;
+
     // Validate total length: should be data.size() - 5 (excluding header, length, module_id, checksum, tail)
     size_t expected_total_length = packet.length + 5;
-    if (expected_total_length != data.size()) {
+    if (!skip_length_check && expected_total_length != data.size()) {
         return std::nullopt;
     }
 
@@ -76,8 +94,8 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& data) {
         return std::nullopt;
     }
 
-    // Validate outer checksum
-    if (!packet.validate_checksum()) {
+    // Skip outer checksum for IMU response (reuse is_imu_response detected above)
+    if (!is_imu_response && !packet.validate_checksum()) {
         return std::nullopt;
     }
 
