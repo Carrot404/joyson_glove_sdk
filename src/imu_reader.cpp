@@ -1,20 +1,13 @@
 #include "joyson_glove/imu_reader.hpp"
+#include <cmath>
 #include <iostream>
-#include <fstream>
-#include <cstring>
 
 namespace joyson_glove {
 
 ImuReader::ImuReader(std::shared_ptr<UdpClient> udp_client,
                      const ImuReaderConfig& config)
     : udp_client_(std::move(udp_client)), config_(config) {
-    // Initialize calibration with default values
-    calibration_.roll_offset = 0.0f;
-    calibration_.pitch_offset = 0.0f;
-    calibration_.yaw_offset = 0.0f;
-    calibration_.is_calibrated = false;
-
-    // Initialize cached data
+    // Initialize with default values
     cached_data_.roll = 0.0f;
     cached_data_.pitch = 0.0f;
     cached_data_.yaw = 0.0f;
@@ -22,46 +15,24 @@ ImuReader::ImuReader(std::shared_ptr<UdpClient> udp_client,
 }
 
 ImuReader::~ImuReader() {
-    stop_update_thread();
-}
-
-ImuReader::ImuReader(ImuReader&& other) noexcept
-    : udp_client_(std::move(other.udp_client_)),
-      config_(std::move(other.config_)),
-      cached_data_(std::move(other.cached_data_)),
-      calibration_(std::move(other.calibration_)),
-      thread_running_(other.thread_running_.load()) {
-    other.thread_running_ = false;
-}
-
-ImuReader& ImuReader::operator=(ImuReader&& other) noexcept {
-    if (this != &other) {
+    try {
         stop_update_thread();
-        udp_client_ = std::move(other.udp_client_);
-        config_ = std::move(other.config_);
-        cached_data_ = std::move(other.cached_data_);
-        calibration_ = std::move(other.calibration_);
-        thread_running_ = other.thread_running_.load();
-        other.thread_running_ = false;
+    } catch (...) {
+        // Swallow exceptions - destructors must not throw
     }
-    return *this;
 }
 
 bool ImuReader::initialize() {
     std::cout << "[ImuReader] Initializing..." << std::endl;
 
-    // Try to load calibration
-    if (!config_.calibration_file.empty()) {
-        load_calibration(config_.calibration_file);
-    }
-
-    // Read initial data
+    // Read initial data to verify hardware connectivity
     auto data = read_imu();
     if (data) {
         std::lock_guard<std::mutex> lock(data_mutex_);
         cached_data_ = apply_calibration(*data);
     } else {
         std::cerr << "[ImuReader] Failed to read initial IMU data" << std::endl;
+        return false;
     }
 
     // Start background thread if configured
@@ -74,21 +45,27 @@ bool ImuReader::initialize() {
 }
 
 void ImuReader::start_update_thread() {
-    if (thread_running_.load()) {
+    if (thread_running_.load(std::memory_order_acquire)) {
         return;
     }
 
-    thread_running_ = true;
-    update_thread_ = std::thread(&ImuReader::update_loop, this);
-    std::cout << "[ImuReader] Update thread started" << std::endl;
+    thread_running_.store(true, std::memory_order_release);
+    try {
+        update_thread_ = std::thread(&ImuReader::update_loop, this);
+        std::cout << "[ImuReader] Update thread started" << std::endl;
+    } catch (const std::system_error& e) {
+        thread_running_.store(false, std::memory_order_release);
+        std::cerr << "[ImuReader] Failed to start update thread: " << e.what() << std::endl;
+        throw;
+    }
 }
 
 void ImuReader::stop_update_thread() {
-    if (!thread_running_.load()) {
+    if (!thread_running_.load(std::memory_order_acquire)) {
         return;
     }
 
-    thread_running_ = false;
+    thread_running_.store(false, std::memory_order_release);
     if (update_thread_.joinable()) {
         update_thread_.join();
     }
@@ -121,74 +98,21 @@ bool ImuReader::calibrate_zero_orientation() {
         return false;
     }
 
-    // Set current orientation as zero point
-    std::lock_guard<std::mutex> lock(calibration_mutex_);
-    calibration_.roll_offset = data->roll;
+    // Set current orientation as zero point and update cached data atomically
+    std::scoped_lock lock(calibration_mutex_, data_mutex_);
+    calibration_.roll_offset  = data->roll;
     calibration_.pitch_offset = data->pitch;
-    calibration_.yaw_offset = data->yaw;
+    calibration_.yaw_offset   = data->yaw;
     calibration_.is_calibrated = true;
 
+    // Re-apply calibration to cached data so get_cached_data() reflects the new zero
+    cached_data_ = apply_calibration_unsafe(*data);
+
     std::cout << "[ImuReader] Zero orientation calibration complete" << std::endl;
-    std::cout << "  Roll offset: " << calibration_.roll_offset << "°" << std::endl;
+    std::cout << "  Roll offset:  " << calibration_.roll_offset  << "°" << std::endl;
     std::cout << "  Pitch offset: " << calibration_.pitch_offset << "°" << std::endl;
-    std::cout << "  Yaw offset: " << calibration_.yaw_offset << "°" << std::endl;
+    std::cout << "  Yaw offset:   " << calibration_.yaw_offset   << "°" << std::endl;
 
-    // Save calibration
-    if (!config_.calibration_file.empty()) {
-        save_calibration(config_.calibration_file);
-    }
-
-    return true;
-}
-
-bool ImuReader::load_calibration(const std::string& filename) {
-    std::string file = filename.empty() ? config_.calibration_file : filename;
-
-    std::ifstream ifs(file, std::ios::binary);
-    if (!ifs) {
-        std::cerr << "[ImuReader] Calibration file not found: " << file << std::endl;
-        return false;
-    }
-
-    ImuCalibration cal;
-    ifs.read(reinterpret_cast<char*>(&cal.roll_offset), sizeof(cal.roll_offset));
-    ifs.read(reinterpret_cast<char*>(&cal.pitch_offset), sizeof(cal.pitch_offset));
-    ifs.read(reinterpret_cast<char*>(&cal.yaw_offset), sizeof(cal.yaw_offset));
-    ifs.read(reinterpret_cast<char*>(&cal.is_calibrated), sizeof(cal.is_calibrated));
-
-    if (!ifs) {
-        std::cerr << "[ImuReader] Failed to read calibration file: " << file << std::endl;
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(calibration_mutex_);
-    calibration_ = cal;
-
-    std::cout << "[ImuReader] Calibration loaded from " << file << std::endl;
-    return true;
-}
-
-bool ImuReader::save_calibration(const std::string& filename) const {
-    std::string file = filename.empty() ? config_.calibration_file : filename;
-
-    std::ofstream ofs(file, std::ios::binary);
-    if (!ofs) {
-        std::cerr << "[ImuReader] Failed to create calibration file: " << file << std::endl;
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(calibration_mutex_);
-    ofs.write(reinterpret_cast<const char*>(&calibration_.roll_offset), sizeof(calibration_.roll_offset));
-    ofs.write(reinterpret_cast<const char*>(&calibration_.pitch_offset), sizeof(calibration_.pitch_offset));
-    ofs.write(reinterpret_cast<const char*>(&calibration_.yaw_offset), sizeof(calibration_.yaw_offset));
-    ofs.write(reinterpret_cast<const char*>(&calibration_.is_calibrated), sizeof(calibration_.is_calibrated));
-
-    if (!ofs) {
-        std::cerr << "[ImuReader] Failed to write calibration file: " << file << std::endl;
-        return false;
-    }
-
-    std::cout << "[ImuReader] Calibration saved to " << file << std::endl;
     return true;
 }
 
@@ -211,23 +135,32 @@ std::chrono::milliseconds ImuReader::get_data_age() const {
 }
 
 void ImuReader::update_loop() {
-    while (thread_running_.load()) {
+    int consecutive_failures = 0;
+
+    while (thread_running_.load(std::memory_order_acquire)) {
         auto start_time = std::chrono::steady_clock::now();
 
         // Read IMU data
         auto data = read_imu();
         if (data) {
+            consecutive_failures = 0;
             auto calibrated = apply_calibration(*data);
             std::lock_guard<std::mutex> lock(data_mutex_);
             cached_data_ = calibrated;
+        } else {
+            ++consecutive_failures;
+            if (consecutive_failures == 10 ||
+                (consecutive_failures > 0 && consecutive_failures % 100 == 0)) {
+                std::cerr << "[ImuReader] WARNING: " << consecutive_failures
+                          << " consecutive read failures" << std::endl;
+            }
         }
 
-        // Sleep for remaining time to maintain update rate
-        auto elapsed = std::chrono::steady_clock::now() - start_time;
-        auto sleep_time = config_.update_interval -
-                         std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+        // Sleep for remaining interval without truncation loss
+        auto elapsed    = std::chrono::steady_clock::now() - start_time;
+        auto sleep_time = config_.update_interval - elapsed;
 
-        if (sleep_time.count() > 0) {
+        if (sleep_time > std::chrono::steady_clock::duration::zero()) {
             std::this_thread::sleep_for(sleep_time);
         }
     }
@@ -235,7 +168,10 @@ void ImuReader::update_loop() {
 
 ImuData ImuReader::apply_calibration(const ImuData& raw_data) const {
     std::lock_guard<std::mutex> lock(calibration_mutex_);
+    return apply_calibration_unsafe(raw_data);
+}
 
+ImuData ImuReader::apply_calibration_unsafe(const ImuData& raw_data) const {
     if (!calibration_.is_calibrated) {
         return raw_data;
     }
@@ -243,7 +179,9 @@ ImuData ImuReader::apply_calibration(const ImuData& raw_data) const {
     ImuData calibrated = raw_data;
     calibrated.roll -= calibration_.roll_offset;
     calibrated.pitch -= calibration_.pitch_offset;
-    calibrated.yaw -= calibration_.yaw_offset;
+
+    // Wrap yaw to [0, 360) to handle circular discontinuity
+    calibrated.yaw = std::fmod(raw_data.yaw - calibration_.yaw_offset + 360.0f, 360.0f);
 
     return calibrated;
 }

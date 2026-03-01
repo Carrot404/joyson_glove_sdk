@@ -58,6 +58,9 @@ if(BUILD_EXAMPLES)
 
     add_executable(servo_mode_demo examples/servo_mode_demo.cpp)
     target_link_libraries(servo_mode_demo ${PROJECT_NAME})
+
+    add_executable(test_imu_reader examples/test_imu_reader.cpp)
+    target_link_libraries(test_imu_reader ${PROJECT_NAME})
 endif()
 
 # Tests

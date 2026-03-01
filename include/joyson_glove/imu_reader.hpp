@@ -7,7 +7,6 @@
 #include <atomic>
 #include <mutex>
 #include <chrono>
-#include <string>
 
 namespace joyson_glove {
 
@@ -26,8 +25,7 @@ struct ImuCalibration {
  */
 struct ImuReaderConfig {
     bool auto_start_thread = true;
-    std::chrono::milliseconds update_interval{10};  // 100Hz default
-    std::string calibration_file = "imu_calibration.bin";
+    std::chrono::milliseconds update_interval{100};  // 10Hz default
 };
 
 /**
@@ -40,11 +38,11 @@ public:
                       const ImuReaderConfig& config = ImuReaderConfig{});
     ~ImuReader();
 
-    // Disable copy, allow move
+    // Disable copy and move
     ImuReader(const ImuReader&) = delete;
     ImuReader& operator=(const ImuReader&) = delete;
-    ImuReader(ImuReader&&) noexcept;
-    ImuReader& operator=(ImuReader&&) noexcept;
+    ImuReader(ImuReader&&) = delete;
+    ImuReader& operator=(ImuReader&&) = delete;
 
     /**
      * Initialize IMU reader
@@ -64,10 +62,14 @@ public:
     /**
      * Check if update thread is running
      */
-    bool is_thread_running() const { return thread_running_.load(); }
+    bool is_thread_running() const { return thread_running_.load(std::memory_order_acquire); }
 
     /**
      * Read IMU data from hardware (blocking)
+     *
+     * WARNING: Do not call this method while the update thread is running,
+     * as concurrent send/receive on the UDP socket may cause response mismatch.
+     * Use get_cached_data() instead when the update thread is active.
      */
     std::optional<ImuData> read_imu();
 
@@ -80,16 +82,6 @@ public:
      * Calibrate zero orientation (set current orientation as zero)
      */
     bool calibrate_zero_orientation();
-
-    /**
-     * Load calibration from file
-     */
-    bool load_calibration(const std::string& filename = "");
-
-    /**
-     * Save calibration to file
-     */
-    bool save_calibration(const std::string& filename = "") const;
 
     /**
      * Get calibration data
@@ -125,8 +117,11 @@ private:
     // Thread function
     void update_loop();
 
-    // Apply calibration to raw IMU data
+    // Apply calibration to raw IMU data (thread-safe)
     ImuData apply_calibration(const ImuData& raw_data) const;
+
+    // Apply calibration without locking (caller must hold calibration_mutex_)
+    ImuData apply_calibration_unsafe(const ImuData& raw_data) const;
 };
 
 } // namespace joyson_glove
