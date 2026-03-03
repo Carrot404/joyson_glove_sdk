@@ -13,7 +13,6 @@ set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
 
 # Find dependencies
 find_package(Threads REQUIRED)
-find_package(spdlog REQUIRED)
 
 # Source files
 set(SDK_SOURCES
@@ -39,7 +38,6 @@ target_include_directories(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
     PUBLIC
         Threads::Threads
-        spdlog::spdlog
 )
 
 # Set library properties
