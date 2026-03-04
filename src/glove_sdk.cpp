@@ -47,6 +47,7 @@ bool GloveSDK::initialize() {
     UdpConfig udp_config;
     udp_config.server_ip = config_.server_ip;
     udp_config.server_port = config_.server_port;
+    udp_config.local_port = config_.local_port;
     udp_config.send_timeout = config_.send_timeout;
     udp_config.receive_timeout = config_.receive_timeout;
 
@@ -73,7 +74,6 @@ bool GloveSDK::initialize() {
     EncoderReaderConfig encoder_config;
     encoder_config.auto_start_thread = config_.auto_start_threads;
     encoder_config.update_interval = config_.encoder_update_interval;
-    encoder_config.calibration_file = config_.encoder_calibration_file;
     encoder_reader_ = std::make_unique<EncoderReader>(udp_client_, encoder_config);
 
     if (!encoder_reader_->initialize()) {
@@ -85,7 +85,6 @@ bool GloveSDK::initialize() {
     ImuReaderConfig imu_config;
     imu_config.auto_start_thread = config_.auto_start_threads;
     imu_config.update_interval = config_.imu_update_interval;
-    imu_config.calibration_file = config_.imu_calibration_file;
     imu_reader_ = std::make_unique<ImuReader>(udp_client_, imu_config);
 
     if (!imu_reader_->initialize()) {

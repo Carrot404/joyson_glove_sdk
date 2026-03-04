@@ -17,6 +17,7 @@ struct GloveConfig {
     // Network configuration
     std::string server_ip = "192.168.10.123";
     uint16_t server_port = 8080;
+    uint16_t local_port = 8080;  // Local port to bind (required for hardware)
     std::chrono::milliseconds send_timeout{100};
     std::chrono::milliseconds receive_timeout{100};
 
@@ -26,9 +27,6 @@ struct GloveConfig {
     std::chrono::milliseconds encoder_update_interval{10};  // 100Hz
     std::chrono::milliseconds imu_update_interval{10};      // 100Hz
 
-    // Calibration files
-    std::string encoder_calibration_file = "encoder_calibration.bin";
-    std::string imu_calibration_file = "imu_calibration.bin";
 };
 
 /**
