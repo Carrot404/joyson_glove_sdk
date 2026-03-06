@@ -14,49 +14,43 @@ MotorController::MotorController(std::shared_ptr<UdpClient> udp_client,
 }
 
 MotorController::~MotorController() {
-    stop_status_update_thread();
-}
-
-MotorController::MotorController(MotorController&& other) noexcept
-    : udp_client_(std::move(other.udp_client_)),
-      config_(std::move(other.config_)),
-      cached_status_(std::move(other.cached_status_)),
-      thread_running_(other.thread_running_.load()) {
-    other.thread_running_ = false;
-}
-
-MotorController& MotorController::operator=(MotorController&& other) noexcept {
-    if (this != &other) {
+    try {
         stop_status_update_thread();
-        udp_client_ = std::move(other.udp_client_);
-        config_ = std::move(other.config_);
-        cached_status_ = std::move(other.cached_status_);
-        thread_running_ = other.thread_running_.load();
-        other.thread_running_ = false;
+    } catch (...) {
+        // Swallow exceptions - destructors must not throw
     }
-    return *this;
 }
+
 
 bool MotorController::initialize() {
     std::cout << "[MotorController] Initializing motors..." << std::endl;
 
-    // Set all motors to position mode
-    if (!set_all_modes(MODE_POSITION)) {
-        std::cerr << "[MotorController] Failed to set motors to position mode" << std::endl;
+    // Set all motors to force mode with initial force value
+    if (!set_all_modes(MODE_FORCE)) {
+        std::cerr << "[MotorController] Failed to set motors to force mode" << std::endl;
         return false;
     }
 
-    // Query initial status for all motors
-    for (uint8_t motor_id = 1; motor_id <= NUM_MOTORS; ++motor_id) {
-        auto status = get_motor_status(motor_id);
-        if (status) {
-            std::lock_guard<std::mutex> lock(status_mutex_);
-            cached_status_[motor_id - 1] = *status;
-        } else {
-            std::cerr << "[MotorController] Failed to read initial status for motor "
-                      << static_cast<int>(motor_id) << std::endl;
-        }
+    // Set initial force value for all motors
+    constexpr uint16_t initial_force = 10;
+    std::array<uint16_t, NUM_MOTORS> forces;
+    forces.fill(initial_force);
+    if (!set_all_forces(forces)) {
+        std::cerr << "[MotorController] Failed to set initial force values" << std::endl;
+        return false;
     }
+
+    // // Query initial status for all motors
+    // for (uint8_t motor_id = 1; motor_id <= NUM_MOTORS; ++motor_id) {
+    //     auto status = get_motor_status(motor_id);
+    //     if (status) {
+    //         std::lock_guard<std::mutex> lock(status_mutex_);
+    //         cached_status_[motor_id - 1] = *status;
+    //     } else {
+    //         std::cerr << "[MotorController] Failed to read initial status for motor "
+    //                   << static_cast<int>(motor_id) << std::endl;
+    //     }
+    // }
 
     // Start background thread if configured
     if (config_.auto_start_thread) {
@@ -68,21 +62,27 @@ bool MotorController::initialize() {
 }
 
 void MotorController::start_status_update_thread() {
-    if (thread_running_.load()) {
+    if (thread_running_.load(std::memory_order_acquire)) {
         return;
     }
 
-    thread_running_ = true;
-    status_update_thread_ = std::thread(&MotorController::status_update_loop, this);
-    std::cout << "[MotorController] Status update thread started" << std::endl;
+    thread_running_.store(true, std::memory_order_release);
+    try {
+        status_update_thread_ = std::thread(&MotorController::status_update_loop, this);
+        std::cout << "[MotorController] Status update thread started" << std::endl;
+    } catch (const std::system_error& e) {
+        thread_running_.store(false, std::memory_order_release);
+        std::cerr << "[MotorController] Failed to start status update thread: " << e.what() << std::endl;
+        throw;
+    }
 }
 
 void MotorController::stop_status_update_thread() {
-    if (!thread_running_.load()) {
+    if (!thread_running_.load(std::memory_order_acquire)) {
         return;
     }
 
-    thread_running_ = false;
+    thread_running_.store(false, std::memory_order_release);
     if (status_update_thread_.joinable()) {
         status_update_thread_.join();
     }
@@ -92,6 +92,11 @@ void MotorController::stop_status_update_thread() {
 bool MotorController::set_motor_mode(uint8_t motor_id, uint8_t mode) {
     if (!is_valid_motor_id(motor_id)) {
         std::cerr << "[MotorController] Invalid motor ID: " << static_cast<int>(motor_id) << std::endl;
+        return false;
+    }
+
+    if (!is_valid_mode(mode)) {
+        std::cerr << "[MotorController] Invalid motor mode: " << static_cast<int>(mode) << std::endl;
         return false;
     }
 
@@ -112,7 +117,7 @@ bool MotorController::set_motor_position(uint8_t motor_id, uint16_t position) {
         return false;
     }
 
-    if (position > MOTOR_POSITION_MAX) {
+    if (!is_valid_position(position)) {
         std::cerr << "[MotorController] Position out of range: " << position << std::endl;
         return false;
     }
@@ -134,7 +139,7 @@ bool MotorController::set_motor_force(uint8_t motor_id, uint16_t force) {
         return false;
     }
 
-    if (force > MOTOR_FORCE_MAX) {
+    if (!is_valid_force(force)) {
         std::cerr << "[MotorController] Force out of range: " << force << std::endl;
         return false;
     }
@@ -156,7 +161,7 @@ bool MotorController::set_motor_speed(uint8_t motor_id, uint16_t speed, uint16_t
         return false;
     }
 
-    if (target_position > MOTOR_POSITION_MAX) {
+    if (!is_valid_position(target_position)) {
         std::cerr << "[MotorController] Target position out of range: " << target_position << std::endl;
         return false;
     }
@@ -247,28 +252,37 @@ std::chrono::milliseconds MotorController::get_status_age(uint8_t motor_id) cons
 }
 
 void MotorController::status_update_loop() {
-    while (thread_running_.load()) {
+    int consecutive_failures = 0;
+
+    while (thread_running_.load(std::memory_order_acquire)) {
         auto start_time = std::chrono::steady_clock::now();
 
         // Update status for all motors
         for (uint8_t motor_id = 1; motor_id <= NUM_MOTORS; ++motor_id) {
-            if (!thread_running_.load()) {
+            if (!thread_running_.load(std::memory_order_acquire)) {
                 break;
             }
 
             auto status = get_motor_status(motor_id);
             if (status) {
+                consecutive_failures = 0;
                 std::lock_guard<std::mutex> lock(status_mutex_);
                 cached_status_[motor_id - 1] = *status;
+            } else {
+                ++consecutive_failures;
+                if (consecutive_failures == 10 ||
+                    (consecutive_failures > 0 && consecutive_failures % 100 == 0)) {
+                    std::cerr << "[MotorController] WARNING: " << consecutive_failures
+                              << " consecutive read failures" << std::endl;
+                }
             }
         }
 
-        // Sleep for remaining time to maintain update rate
-        auto elapsed = std::chrono::steady_clock::now() - start_time;
-        auto sleep_time = config_.update_interval -
-                         std::chrono::duration_cast<std::chrono::milliseconds>(elapsed);
+        // Sleep for remaining interval without truncation loss
+        auto elapsed    = std::chrono::steady_clock::now() - start_time;
+        auto sleep_time = config_.update_interval - elapsed;
 
-        if (sleep_time.count() > 0) {
+        if (sleep_time > std::chrono::steady_clock::duration::zero()) {
             std::this_thread::sleep_for(sleep_time);
         }
     }

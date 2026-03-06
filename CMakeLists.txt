@@ -64,6 +64,9 @@ if(BUILD_EXAMPLES)
 
     add_executable(test_encoder_reader examples/test_encoder_reader.cpp)
     target_link_libraries(test_encoder_reader ${PROJECT_NAME})
+
+    add_executable(test_motor_controller examples/test_motor_controller.cpp)
+    target_link_libraries(test_motor_controller ${PROJECT_NAME})
 endif()
 
 # Tests

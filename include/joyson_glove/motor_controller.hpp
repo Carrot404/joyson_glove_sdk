@@ -16,7 +16,7 @@ namespace joyson_glove {
  */
 struct MotorControllerConfig {
     bool auto_start_thread = true;
-    std::chrono::milliseconds update_interval{10};  // 100Hz default
+    std::chrono::milliseconds update_interval{100};  // 10Hz default
 };
 
 /**
@@ -29,14 +29,14 @@ public:
                             const MotorControllerConfig& config = MotorControllerConfig{});
     ~MotorController();
 
-    // Disable copy, allow move
+    // Disable copy and move
     MotorController(const MotorController&) = delete;
     MotorController& operator=(const MotorController&) = delete;
-    MotorController(MotorController&&) noexcept;
-    MotorController& operator=(MotorController&&) noexcept;
+    MotorController(MotorController&&) = delete;
+    MotorController& operator=(MotorController&&) = delete;
 
     /**
-     * Initialize all motors (set to position mode by default)
+     * Initialize all motors (set to force mode with initial force 10 by default)
      * @return true if all motors initialized successfully
      */
     bool initialize();
@@ -54,7 +54,7 @@ public:
     /**
      * Check if status update thread is running
      */
-    bool is_thread_running() const { return thread_running_.load(); }
+    bool is_thread_running() const { return thread_running_.load(std::memory_order_acquire); }
 
     // Single motor control
     bool set_motor_mode(uint8_t motor_id, uint8_t mode);
@@ -95,6 +95,21 @@ private:
     // Helper: validate motor ID
     bool is_valid_motor_id(uint8_t motor_id) const {
         return motor_id >= 1 && motor_id <= NUM_MOTORS;
+    }
+
+    // Helper: validate motor mode
+    bool is_valid_mode(uint8_t mode) const {
+        return mode <= MODE_SPEED_FORCE;
+    }
+
+    // Helper: validate motor force
+    bool is_valid_force(uint16_t force) const {
+        return force <= MOTOR_FORCE_MAX;
+    }
+
+    // Helper: validate motor position
+    bool is_valid_position(uint16_t position) const {
+        return position <= MOTOR_POSITION_MAX;
     }
 };
 
