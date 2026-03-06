@@ -1,3 +1,10 @@
+/**
+ * @file motor_controller.cpp
+ * @brief Implementation of motor controller
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/motor_controller.hpp"
 #include <iostream>
 

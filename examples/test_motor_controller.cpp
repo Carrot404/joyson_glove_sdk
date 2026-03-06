@@ -1,3 +1,10 @@
+/**
+ * @file test_motor_controller.cpp
+ * @brief Example: standalone motor controller testing
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/motor_controller.hpp"
 #include "joyson_glove/udp_client.hpp"
 #include <iostream>

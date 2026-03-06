@@ -1,3 +1,10 @@
+/**
+ * @file imu_reader.hpp
+ * @brief IMU sensor data reading and calibration
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #pragma once
 
 #include "joyson_glove/protocol.hpp"

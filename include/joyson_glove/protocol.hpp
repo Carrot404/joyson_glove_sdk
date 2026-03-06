@@ -1,3 +1,10 @@
+/**
+ * @file protocol.hpp
+ * @brief Communication protocol codec and data structures
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #pragma once
 
 #include <array>

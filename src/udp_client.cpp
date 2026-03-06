@@ -1,3 +1,10 @@
+/**
+ * @file udp_client.cpp
+ * @brief Implementation of UDP network client
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/udp_client.hpp"
 #include <sys/socket.h>
 #include <netinet/in.h>

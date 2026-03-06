@@ -1,3 +1,10 @@
+/**
+ * @file encoder_reader.cpp
+ * @brief Implementation of encoder reader
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/encoder_reader.hpp"
 #include <iostream>
 

@@ -1,3 +1,10 @@
+/**
+ * @file test_udp_client.cpp
+ * @brief Unit tests for UdpClient
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/udp_client.hpp"
 #include <gtest/gtest.h>
 #include <thread>

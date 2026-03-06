@@ -1,3 +1,10 @@
+/**
+ * @file basic_motor_control.cpp
+ * @brief Example: basic motor control usage
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/glove_sdk.hpp"
 #include <iostream>
 #include <thread>
@@ -5,12 +12,25 @@
 
 using namespace joyson_glove;
 
+// Helper function to print network statistics
+void print_network_stats(const std::string& label, const NetworkStatistics& stats) {
+    std::cout << label << std::endl;
+    std::cout << "  Packets sent: " << stats.packets_sent << std::endl;
+    std::cout << "  Packets received: " << stats.packets_received << std::endl;
+    std::cout << "  Send errors: " << stats.send_errors << std::endl;
+    std::cout << "  Receive errors: " << stats.receive_errors << std::endl;
+    std::cout << "  Timeouts: " << stats.timeouts << std::endl;
+    std::cout << "  Checksum errors: " << stats.checksum_errors << std::endl;
+}
+
 int main() {
     std::cout << "=== Joyson Glove SDK - Basic Motor Control Example ===" << std::endl;
 
     // Create SDK instance with default configuration
     GloveConfig config;
-    config.auto_start_threads = false;  // Manual control for this example
+    config.send_timeout = std::chrono::milliseconds(500);
+    config.receive_timeout = std::chrono::milliseconds(500);
+    config.auto_start_thread = false;  // Manual control for this example
     GloveSDK sdk(config);
 
     // Initialize SDK
@@ -50,10 +70,10 @@ int main() {
         auto status = sdk.motor_controller().get_motor_status(motor_id);
         if (status) {
             std::cout << "  Motor " << static_cast<int>(motor_id) << ":" << std::endl;
-            std::cout << "    Position: " << status->position << " (target: " << target_positions[motor_id - 1] << ")" << std::endl;
-            std::cout << "    Velocity: " << status->velocity << " steps/s" << std::endl;
-            std::cout << "    Force: " << status->force << std::endl;
-            std::cout << "    Mode: " << static_cast<int>(status->mode) << std::endl;
+            std::cout << "    Position: " << status->actual_position << " (target: " << target_positions[motor_id - 1] << ")" << std::endl;
+            std::cout << "    Current: " << status->actual_current << " mA" << std::endl;
+            std::cout << "    Force: " << status->force_value << std::endl;
+            std::cout << "    Temperature: " << static_cast<int>(status->temperature) << " °C" << std::endl;
         } else {
             std::cerr << "  Failed to read status for motor " << static_cast<int>(motor_id) << std::endl;
         }
@@ -69,19 +89,13 @@ int main() {
         std::this_thread::sleep_for(std::chrono::seconds(1));
         auto status = sdk.motor_controller().get_motor_status(test_motor);
         if (status) {
-            std::cout << "  Current position: " << status->position << std::endl;
+            std::cout << "  Current position: " << status->actual_position << std::endl;
         }
     }
 
     // Display network statistics
     std::cout << "\n[7] Network statistics:" << std::endl;
-    auto stats = sdk.get_network_statistics();
-    std::cout << "  Packets sent: " << stats.packets_sent << std::endl;
-    std::cout << "  Packets received: " << stats.packets_received << std::endl;
-    std::cout << "  Send errors: " << stats.send_errors << std::endl;
-    std::cout << "  Receive errors: " << stats.receive_errors << std::endl;
-    std::cout << "  Timeouts: " << stats.timeouts << std::endl;
-    std::cout << "  Checksum errors: " << stats.checksum_errors << std::endl;
+    print_network_stats("  Final statistics:", sdk.get_network_statistics());
 
     // Shutdown SDK
     std::cout << "\n[8] Shutting down SDK..." << std::endl;

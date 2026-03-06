@@ -1,3 +1,10 @@
+/**
+ * @file test_imu_reader.cpp
+ * @brief Example: standalone IMU reader testing
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/imu_reader.hpp"
 #include "joyson_glove/udp_client.hpp"
 #include <iostream>

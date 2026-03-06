@@ -1,3 +1,10 @@
+/**
+ * @file protocol.cpp
+ * @brief Implementation of communication protocol codec
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/protocol.hpp"
 #include <cstring>
 #include <algorithm>

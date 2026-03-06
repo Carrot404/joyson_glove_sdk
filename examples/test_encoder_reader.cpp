@@ -1,3 +1,10 @@
+/**
+ * @file test_encoder_reader.cpp
+ * @brief Example: standalone encoder reader testing
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/encoder_reader.hpp"
 #include "joyson_glove/udp_client.hpp"
 #include <iostream>

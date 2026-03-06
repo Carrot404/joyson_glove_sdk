@@ -1,3 +1,10 @@
+/**
+ * @file read_sensors.cpp
+ * @brief Example: reading encoder and IMU sensor data
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/glove_sdk.hpp"
 #include <iostream>
 #include <thread>
@@ -11,7 +18,9 @@ int main() {
 
     // Create SDK instance with background threads enabled
     GloveConfig config;
-    config.auto_start_threads = true;  // Enable background data updates
+    config.send_timeout = std::chrono::milliseconds(500);
+    config.receive_timeout = std::chrono::milliseconds(500);
+    config.auto_start_thread = true;  // Enable background data updates
     GloveSDK sdk(config);
 
     // Initialize SDK
@@ -82,11 +91,13 @@ int main() {
     // Display detailed encoder data
     std::cout << "\n[5] Detailed encoder data (all 16 channels):" << std::endl;
     auto encoder_data = sdk.encoder_reader().get_cached_data();
+    auto voltages = sdk.encoder_reader().adc_to_voltages(encoder_data.adc_values);
     auto encoder_angles = sdk.get_encoder_angles();
 
     for (size_t i = 0; i < NUM_ENCODER_CHANNELS; ++i) {
         std::cout << "  CH" << std::setw(2) << i << ": "
-                  << std::fixed << std::setprecision(3) << encoder_data.voltages[i] << " V  ->  "
+                  << "ADC=" << std::setw(4) << encoder_data.adc_values[i] << "  "
+                  << std::fixed << std::setprecision(3) << voltages[i] << " V  ->  "
                   << std::fixed << std::setprecision(1) << encoder_angles[i] << "°" << std::endl;
     }
 
@@ -95,9 +106,9 @@ int main() {
     auto motor_status = sdk.motor_controller().get_all_cached_status();
     for (size_t i = 0; i < NUM_MOTORS; ++i) {
         std::cout << "  Motor " << (i + 1) << ": "
-                  << "Pos=" << motor_status[i].position << " "
-                  << "Vel=" << motor_status[i].velocity << " "
-                  << "Force=" << motor_status[i].force << std::endl;
+                  << "Pos=" << motor_status[i].actual_position << " "
+                  << "Cur=" << motor_status[i].actual_current << " "
+                  << "Force=" << motor_status[i].force_value << std::endl;
     }
 
     // Display data age (freshness)

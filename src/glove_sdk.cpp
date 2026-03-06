@@ -1,3 +1,10 @@
+/**
+ * @file glove_sdk.cpp
+ * @brief Implementation of GloveSDK
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/glove_sdk.hpp"
 #include <iostream>
 

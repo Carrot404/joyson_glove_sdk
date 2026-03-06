@@ -1,3 +1,10 @@
+/**
+ * @file motor_controller.hpp
+ * @brief Motor control interface and configuration
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #pragma once
 
 #include "joyson_glove/protocol.hpp"

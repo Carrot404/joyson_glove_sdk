@@ -1,3 +1,10 @@
+/**
+ * @file imu_reader.cpp
+ * @brief Implementation of IMU reader
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #include "joyson_glove/imu_reader.hpp"
 #include <cmath>
 #include <iostream>

@@ -1,3 +1,10 @@
+/**
+ * @file glove_sdk.hpp
+ * @brief Top-level SDK interface for Joyson Glove
+ * @author Songjie Xiao
+ * @copyright Copyright (c) 2026 Joyson Robot. All rights reserved.
+ */
+
 #pragma once
 
 #include "joyson_glove/protocol.hpp"
