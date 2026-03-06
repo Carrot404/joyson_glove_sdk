@@ -164,18 +164,27 @@ std::chrono::milliseconds EncoderReader::get_data_age() const {
     return age;
 }
 
+bool EncoderReader::update_once() {
+    // Read encoder data
+    auto data = read_encoders();
+    if (data) {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        cached_data_ = *data;
+        return true;
+    }
+    return false;
+}
+
 void EncoderReader::update_loop() {
     int consecutive_failures = 0;
 
     while (thread_running_.load(std::memory_order_acquire)) {
         auto start_time = std::chrono::steady_clock::now();
 
-        // Read encoder data
-        auto data = read_encoders();
-        if (data) {
+        // Perform single update cycle
+        bool success = update_once();
+        if (success) {
             consecutive_failures = 0;
-            std::lock_guard<std::mutex> lock(data_mutex_);
-            cached_data_ = *data;
         } else {
             ++consecutive_failures;
             if (consecutive_failures == 10 ||

@@ -251,30 +251,42 @@ std::chrono::milliseconds MotorController::get_status_age(uint8_t motor_id) cons
     return age;
 }
 
+bool MotorController::update_once() {
+    bool any_success = false;
+
+    // Update status for all motors
+    for (uint8_t motor_id = 1; motor_id <= NUM_MOTORS; ++motor_id) {
+        auto status = get_motor_status(motor_id);
+        if (status) {
+            any_success = true;
+            std::lock_guard<std::mutex> lock(status_mutex_);
+            cached_status_[motor_id - 1] = *status;
+        }
+    }
+
+    return any_success;
+}
+
 void MotorController::status_update_loop() {
     int consecutive_failures = 0;
 
     while (thread_running_.load(std::memory_order_acquire)) {
         auto start_time = std::chrono::steady_clock::now();
 
-        // Update status for all motors
-        for (uint8_t motor_id = 1; motor_id <= NUM_MOTORS; ++motor_id) {
-            if (!thread_running_.load(std::memory_order_acquire)) {
-                break;
-            }
+        // Perform single update cycle
+        if (!thread_running_.load(std::memory_order_acquire)) {
+            break;
+        }
 
-            auto status = get_motor_status(motor_id);
-            if (status) {
-                consecutive_failures = 0;
-                std::lock_guard<std::mutex> lock(status_mutex_);
-                cached_status_[motor_id - 1] = *status;
-            } else {
-                ++consecutive_failures;
-                if (consecutive_failures == 10 ||
-                    (consecutive_failures > 0 && consecutive_failures % 100 == 0)) {
-                    std::cerr << "[MotorController] WARNING: " << consecutive_failures
-                              << " consecutive read failures" << std::endl;
-                }
+        bool success = update_once();
+        if (success) {
+            consecutive_failures = 0;
+        } else {
+            ++consecutive_failures;
+            if (consecutive_failures == 10 ||
+                (consecutive_failures > 0 && consecutive_failures % 100 == 0)) {
+                std::cerr << "[MotorController] WARNING: " << consecutive_failures
+                          << " consecutive read failures" << std::endl;
             }
         }
 

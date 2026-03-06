@@ -52,6 +52,12 @@ public:
     /**
      * Start background data update thread
      */
+    /**
+     * @brief Perform a single update cycle for IMU data
+     * @return true if IMU data was successfully read
+     */
+    bool update_once();
+
     void start_update_thread();
 
     /**

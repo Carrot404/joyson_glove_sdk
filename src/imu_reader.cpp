@@ -134,19 +134,28 @@ std::chrono::milliseconds ImuReader::get_data_age() const {
     return age;
 }
 
+bool ImuReader::update_once() {
+    // Read IMU data
+    auto data = read_imu();
+    if (data) {
+        auto calibrated = apply_calibration(*data);
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        cached_data_ = calibrated;
+        return true;
+    }
+    return false;
+}
+
 void ImuReader::update_loop() {
     int consecutive_failures = 0;
 
     while (thread_running_.load(std::memory_order_acquire)) {
         auto start_time = std::chrono::steady_clock::now();
 
-        // Read IMU data
-        auto data = read_imu();
-        if (data) {
+        // Perform single update cycle
+        bool success = update_once();
+        if (success) {
             consecutive_failures = 0;
-            auto calibrated = apply_calibration(*data);
-            std::lock_guard<std::mutex> lock(data_mutex_);
-            cached_data_ = calibrated;
         } else {
             ++consecutive_failures;
             if (consecutive_failures == 10 ||

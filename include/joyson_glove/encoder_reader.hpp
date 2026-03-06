@@ -57,6 +57,12 @@ public:
     /**
      * Start background data update thread
      */
+    /**
+     * @brief Perform a single update cycle for encoder data
+     * @return true if encoder data was successfully read
+     */
+    bool update_once();
+
     void start_update_thread();
 
     /**

@@ -44,6 +44,12 @@ public:
     /**
      * Start background status update thread
      */
+    /**
+     * @brief Perform a single update cycle for all motors
+     * @return true if at least one motor status was successfully read
+     */
+    bool update_once();
+
     void start_status_update_thread();
 
     /**
