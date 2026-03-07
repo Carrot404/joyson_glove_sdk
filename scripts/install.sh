@@ -105,8 +105,8 @@ main() {
     # Step 1: Install library
     print_step "Installing library..."
     mkdir -p "$PREFIX/lib"
-    cp -v libjoyson_glove_sdk.so "$PREFIX/lib/"
-    chmod 755 "$PREFIX/lib/libjoyson_glove_sdk.so"
+    cp -v libjoyson_glove_sdk.so* "$PREFIX/lib/"
+    chmod 755 "$PREFIX/lib"/libjoyson_glove_sdk.so*
     print_info "✓ Library installed to $PREFIX/lib/"
 
     # Step 2: Install headers
@@ -119,9 +119,18 @@ main() {
     # Step 3: Install CMake config
     print_step "Installing CMake configuration..."
     mkdir -p "$PREFIX/lib/cmake/joyson_glove_sdk"
-    cp -v joyson_glove_sdkConfig.cmake "$PREFIX/lib/cmake/joyson_glove_sdk/"
-    cp -v joyson_glove_sdkConfigVersion.cmake "$PREFIX/lib/cmake/joyson_glove_sdk/"
-    chmod 644 "$PREFIX/lib/cmake/joyson_glove_sdk/"*.cmake
+    if [ -f "joyson_glove_sdkConfig.cmake" ]; then
+        cp -v joyson_glove_sdkConfig.cmake "$PREFIX/lib/cmake/joyson_glove_sdk/"
+        chmod 644 "$PREFIX/lib/cmake/joyson_glove_sdk/joyson_glove_sdkConfig.cmake"
+    fi
+    if [ -f "joyson_glove_sdkConfigVersion.cmake" ]; then
+        cp -v joyson_glove_sdkConfigVersion.cmake "$PREFIX/lib/cmake/joyson_glove_sdk/"
+        chmod 644 "$PREFIX/lib/cmake/joyson_glove_sdk/joyson_glove_sdkConfigVersion.cmake"
+    fi
+    if [ -f "joyson_glove_sdkTargets.cmake" ]; then
+        cp -v joyson_glove_sdkTargets.cmake "$PREFIX/lib/cmake/joyson_glove_sdk/"
+        chmod 644 "$PREFIX/lib/cmake/joyson_glove_sdk/joyson_glove_sdkTargets.cmake"
+    fi
     print_info "✓ CMake config installed to $PREFIX/lib/cmake/joyson_glove_sdk/"
 
     # Step 4: Install examples (optional)
@@ -129,20 +138,12 @@ main() {
         print_step "Installing examples..."
         mkdir -p "$PREFIX/share/joyson_glove_sdk/examples"
 
-        if [ -f "basic_motor_control" ]; then
-            cp -v basic_motor_control "$PREFIX/share/joyson_glove_sdk/examples/"
-            chmod 755 "$PREFIX/share/joyson_glove_sdk/examples/basic_motor_control"
-        fi
-
-        if [ -f "read_sensors" ]; then
-            cp -v read_sensors "$PREFIX/share/joyson_glove_sdk/examples/"
-            chmod 755 "$PREFIX/share/joyson_glove_sdk/examples/read_sensors"
-        fi
-
-        if [ -f "servo_mode_demo" ]; then
-            cp -v servo_mode_demo "$PREFIX/share/joyson_glove_sdk/examples/"
-            chmod 755 "$PREFIX/share/joyson_glove_sdk/examples/servo_mode_demo"
-        fi
+        for example in basic_motor_control read_sensors test_encoder_reader test_imu_reader test_motor_controller; do
+            if [ -f "$example" ]; then
+                cp -v "$example" "$PREFIX/share/joyson_glove_sdk/examples/"
+                chmod 755 "$PREFIX/share/joyson_glove_sdk/examples/$example"
+            fi
+        done
 
         print_info "✓ Examples installed to $PREFIX/share/joyson_glove_sdk/examples/"
     fi
@@ -152,15 +153,26 @@ main() {
         print_step "Installing documentation..."
         mkdir -p "$PREFIX/share/doc/joyson_glove_sdk"
 
-        cp -v "$PROJECT_ROOT/README.md" "$PREFIX/share/doc/joyson_glove_sdk/"
-        cp -v "$PROJECT_ROOT/QUICKSTART.md" "$PREFIX/share/doc/joyson_glove_sdk/"
-        cp -v "$PROJECT_ROOT/API_REFERENCE.md" "$PREFIX/share/doc/joyson_glove_sdk/"
-        cp -v "$PROJECT_ROOT/PROTOCOL.md" "$PREFIX/share/doc/joyson_glove_sdk/"
-        cp -v "$PROJECT_ROOT/TROUBLESHOOTING.md" "$PREFIX/share/doc/joyson_glove_sdk/"
-        cp -v "$PROJECT_ROOT/CHANGELOG.md" "$PREFIX/share/doc/joyson_glove_sdk/"
-        cp -v "$PROJECT_ROOT/LICENSE" "$PREFIX/share/doc/joyson_glove_sdk/"
+        # Install main README
+        if [ -f "$PROJECT_ROOT/README.md" ]; then
+            cp -v "$PROJECT_ROOT/README.md" "$PREFIX/share/doc/joyson_glove_sdk/"
+        fi
 
-        chmod 644 "$PREFIX/share/doc/joyson_glove_sdk/"*
+        # Install LICENSE
+        if [ -f "$PROJECT_ROOT/LICENSE" ]; then
+            cp -v "$PROJECT_ROOT/LICENSE" "$PREFIX/share/doc/joyson_glove_sdk/"
+        fi
+
+        # Install docs from docs/ directory
+        if [ -d "$PROJECT_ROOT/docs" ]; then
+            for doc in QUICKSTART.md API_REFERENCE.md PROTOCOL.md TROUBLESHOOTING.md CHANGELOG.md CONTRIBUTING.md; do
+                if [ -f "$PROJECT_ROOT/docs/$doc" ]; then
+                    cp -v "$PROJECT_ROOT/docs/$doc" "$PREFIX/share/doc/joyson_glove_sdk/"
+                fi
+            done
+        fi
+
+        chmod 644 "$PREFIX/share/doc/joyson_glove_sdk/"* 2>/dev/null || true
         print_info "✓ Documentation installed to $PREFIX/share/doc/joyson_glove_sdk/"
     fi
 
@@ -172,8 +184,8 @@ main() {
     # Step 7: Verify installation
     print_step "Verifying installation..."
 
-    if [ -f "$PREFIX/lib/libjoyson_glove_sdk.so" ]; then
-        print_info "✓ Library: $PREFIX/lib/libjoyson_glove_sdk.so"
+    if [ -f "$PREFIX/lib/libjoyson_glove_sdk.so" ] || [ -f "$PREFIX/lib/libjoyson_glove_sdk.so.1" ]; then
+        print_info "✓ Library: $PREFIX/lib/libjoyson_glove_sdk.so*"
     else
         print_error "✗ Library not found"
     fi
@@ -192,7 +204,7 @@ main() {
     echo "=========================================="
     echo ""
     echo "Installation summary:"
-    echo "  Library: $PREFIX/lib/libjoyson_glove_sdk.so"
+    echo "  Library: $PREFIX/lib/libjoyson_glove_sdk.so*"
     echo "  Headers: $PREFIX/include/joyson_glove/"
     echo "  CMake config: $PREFIX/lib/cmake/joyson_glove_sdk/"
 

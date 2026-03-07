@@ -1,173 +1,174 @@
 # Joyson Glove SDK - 项目实施总结
 
-## 📋 项目概述
+## 项目概述
 
 本项目成功实现了 Joyson 外骨骼手套的 C++ SDK,提供了完整的电机控制和传感器数据采集功能。
 
 ### 核心功能
 
-✅ **电机控制**
-- 6 个 LAF 执行器的位置、力、速度、伺服模式控制
-- 批量控制接口提高效率
-- 后台线程自动更新电机状态
+- **电机控制**
+  - 6 个 LAF 执行器的位置、力、速度、伺服、电压、速度力控模式控制
+  - 批量控制接口提高效率
+  - 统一后台线程自动更新电机状态
+  - 输入验证 (motor ID, mode, force, position)
 
-✅ **传感器读取**
-- 16 通道编码器数据采集 (0-4V → 0-360°)
-- 3 轴 IMU 姿态数据 (roll, pitch, yaw)
-- 零点校准和数据持久化
+- **传感器读取**
+  - 16 通道编码器数据采集 (ADC -> 电压 -> 角度)
+  - 3 轴 IMU 姿态数据 (roll, pitch, yaw)
+  - 零点校准 (内存结构体)
+  - ADC 原始值到电压转换
 
-✅ **通信协议**
-- UDP 协议封装 (192.168.10.123:8080)
-- 完整的数据包编解码
-- 校验和验证和错误处理
+- **通信协议**
+  - UDP 协议封装 (192.168.10.123:8080)
+  - 本地端口绑定 (硬件通信所需)
+  - 完整的数据包编解码 (外层包 + 内层电缸子协议)
+  - 双层校验和验证 (外层包 + 电机内层包)
+  - 混合字节序处理 (电机小端, 编码器/IMU 大端)
 
-✅ **线程安全**
-- 所有操作都是线程安全的
-- 后台线程异步更新数据
-- 缓存数据访问无阻塞
+- **线程安全**
+  - 所有操作都是线程安全的
+  - 统一后台线程异步更新数据
+  - 缓存数据访问无阻塞
+  - `memory_order_acquire` 原子操作
 
-## 📁 项目结构
+## 项目结构
 
 ```
 joyson_glove_sdk/
-├── include/joyson_glove/          # 公共头文件
-│   ├── protocol.hpp               # 协议定义和编解码
-│   ├── udp_client.hpp             # UDP 通信客户端
-│   ├── motor_controller.hpp       # 电机控制器
-│   ├── encoder_reader.hpp         # 编码器读取器
-│   ├── imu_reader.hpp             # IMU 读取器
-│   └── glove_sdk.hpp              # 主 SDK 接口
-├── src/                           # 实现文件
+├── include/joyson_glove/          # Public headers
+│   ├── protocol.hpp               # Protocol definitions and encoding/decoding
+│   ├── udp_client.hpp             # UDP communication client
+│   ├── motor_controller.hpp       # Motor controller
+│   ├── encoder_reader.hpp         # Encoder reader
+│   ├── imu_reader.hpp             # IMU reader
+│   └── glove_sdk.hpp              # Main SDK interface
+├── src/                           # Implementation files
 │   ├── protocol.cpp
 │   ├── udp_client.cpp
 │   ├── motor_controller.cpp
 │   ├── encoder_reader.cpp
 │   ├── imu_reader.cpp
 │   └── glove_sdk.cpp
-├── examples/                      # 示例程序
-│   ├── basic_motor_control.cpp    # 基础电机控制
-│   ├── read_sensors.cpp           # 传感器数据读取
-│   └── servo_mode_demo.cpp        # 伺服模式演示
-├── tests/                         # 单元测试
-│   ├── test_protocol.cpp          # 协议测试
-│   └── test_udp_client.cpp        # UDP 客户端测试
-├── cmake/                         # CMake 配置
+├── examples/                      # Example programs
+│   ├── basic_motor_control.cpp    # Basic motor control
+│   ├── read_sensors.cpp           # Sensor data reading
+│   ├── test_motor_controller.cpp  # Standalone motor test
+│   ├── test_encoder_reader.cpp    # Standalone encoder test
+│   └── test_imu_reader.cpp        # Standalone IMU test
+├── tests/                         # Unit tests
+│   ├── test_protocol.cpp          # Protocol tests
+│   └── test_udp_client.cpp        # UDP client tests
+├── docs/                          # Documentation
+│   ├── API_REFERENCE.md           # API reference
+│   ├── CHANGELOG.md               # Version changelog
+│   ├── CONTRIBUTING.md            # Contributing guidelines
+│   ├── PROJECT_SUMMARY.md         # This file
+│   ├── PROTOCOL.md                # Protocol specification
+│   ├── QUICKSTART.md              # Quick start guide
+│   └── TROUBLESHOOTING.md         # Troubleshooting guide
+├── cmake/                         # CMake configuration
 │   └── joyson_glove_sdkConfig.cmake.in
-├── CMakeLists.txt                 # 构建配置
-├── README.md                      # 项目说明
-├── QUICKSTART.md                  # 快速入门指南
-├── API_REFERENCE.md               # API 参考文档
-└── .gitignore                     # Git 忽略文件
+├── CMakeLists.txt                 # Build configuration
+├── README.md                      # Project README
+└── .gitignore                     # Git ignore rules
 ```
 
-## 🎯 实施阶段完成情况
+## 实施阶段完成情况
 
-### Phase 1: Core Protocol Layer ✅
-- ✅ `protocol.hpp/cpp` - 协议定义和编解码
-- ✅ 数据包序列化/反序列化
-- ✅ 校验和计算和验证
-- ✅ 所有命令编码函数
-- ✅ 所有响应解析函数
-- ✅ 单元测试 (`test_protocol.cpp`)
+### Phase 1: Core Protocol Layer
+- `protocol.hpp/cpp` - Protocol definitions and encoding/decoding
+- Packet serialization/deserialization (1-byte length and checksum)
+- Outer checksum calculation and validation
+- Inner motor sub-protocol with checksum validation
+- All command encoding functions (read status, set mode/position/force/speed, read motor ID)
+- All response parsing functions
+- Mixed endianness handling (motor LE, encoder/IMU BE)
+- Unit tests (`test_protocol.cpp`)
 
-### Phase 2: Communication Layer ✅
-- ✅ `udp_client.hpp/cpp` - UDP 通信客户端
-- ✅ Socket 创建和连接
-- ✅ 超时处理
-- ✅ 发送/接收操作
-- ✅ 网络统计
-- ✅ 线程安全
-- ✅ 单元测试 (`test_udp_client.cpp`)
+### Phase 2: Communication Layer
+- `udp_client.hpp/cpp` - UDP communication client
+- Socket creation with local port binding
+- Timeout handling (configurable send/receive)
+- Send/receive operations
+- Network statistics tracking
+- Thread-safe design
+- Unit tests (`test_udp_client.cpp`)
 
-### Phase 3: Device Controllers ✅
-- ✅ `motor_controller.hpp/cpp` - 电机控制器
-  - 单电机和批量控制
-  - 状态缓存
-  - 后台更新线程
-- ✅ `encoder_reader.hpp/cpp` - 编码器读取器
-  - 电压读取和角度转换
-  - 零点校准
-  - 校准数据持久化
-- ✅ `imu_reader.hpp/cpp` - IMU 读取器
-  - 姿态数据读取
-  - 零点校准
-  - 漂移补偿
+### Phase 3: Device Controllers
+- `motor_controller.hpp/cpp` - Motor controller
+  - Single motor and batch control
+  - 6 motor modes (position, servo, speed, force, voltage, speed-force)
+  - Status caching with `update_once()` support
+  - Input validation helpers
+- `encoder_reader.hpp/cpp` - Encoder reader
+  - ADC raw value reading and voltage conversion
+  - Voltage-to-angle conversion
+  - Zero-point calibration (in-memory)
+  - Programmatic calibration get/set
+- `imu_reader.hpp/cpp` - IMU reader
+  - 3-axis orientation reading
+  - Zero-orientation calibration (in-memory)
+  - Programmatic calibration get/set
 
-### Phase 4: SDK Facade ✅
-- ✅ `glove_sdk.hpp/cpp` - 主 SDK 接口
-- ✅ 统一的初始化/关闭流程
-- ✅ 便捷方法封装
-- ✅ 组件访问接口
-- ✅ 全局校准功能
+### Phase 4: SDK Facade
+- `glove_sdk.hpp/cpp` - Main SDK interface
+- Unified initialization/shutdown
+- Unified background thread (single thread for all components)
+- Convenience methods (motor control, sensor reading)
+- Component access (motor_controller, encoder_reader, imu_reader, udp_client)
+- Global calibration
 
-### Phase 5: Examples and Documentation ✅
-- ✅ `basic_motor_control.cpp` - 基础电机控制示例
-- ✅ `read_sensors.cpp` - 传感器读取示例
-- ✅ `servo_mode_demo.cpp` - 伺服模式演示
-- ✅ `README.md` - 完整项目文档
-- ✅ `QUICKSTART.md` - 快速入门指南
-- ✅ `API_REFERENCE.md` - API 参考文档
-- ✅ CMake 构建配置
-- ✅ 单元测试框架
+### Phase 5: Examples and Documentation
+- `basic_motor_control.cpp` - Basic motor control example
+- `read_sensors.cpp` - Sensor reading example
+- `test_motor_controller.cpp` - Standalone motor test
+- `test_encoder_reader.cpp` - Standalone encoder test
+- `test_imu_reader.cpp` - Standalone IMU test
+- Complete documentation suite (API reference, protocol spec, quickstart, troubleshooting)
+- CMake build configuration
+- Unit test framework
 
-## 🔧 技术实现亮点
+## Technical Highlights
 
-### 1. 协议层设计
-- **完整的协议封装**: 所有命令和响应都有对应的编解码函数
-- **校验和验证**: 自动计算和验证数据包校验和
-- **小端序处理**: 正确处理多字节数据的字节序
-- **错误处理**: 使用 `std::optional` 优雅处理解析失败
+### 1. Protocol Layer
+- **Dual-layer protocol**: Outer packet + inner motor sub-protocol with separate checksums
+- **Mixed endianness**: Correct handling of LE (motor) and BE (encoder/IMU) data
+- **Firmware compatibility**: Workarounds for known firmware bugs (incorrect length field, invalid checksums)
+- **Error handling**: `std::optional` for graceful failure handling
 
-### 2. 通信层设计
-- **超时机制**: 可配置的发送/接收超时
-- **统计信息**: 详细的网络统计 (成功率、超时、错误)
-- **线程安全**: Mutex 保护所有共享状态
-- **移动语义**: 支持高效的资源转移
+### 2. Communication Layer
+- **Local port binding**: Required for hardware communication
+- **Timeout mechanism**: Configurable send/receive timeouts
+- **Statistics tracking**: Detailed network stats (success rate, timeouts, errors)
+- **Thread safety**: Mutex-protected shared state
 
-### 3. 设备控制层设计
-- **异步更新**: 后台线程自动更新传感器数据
-- **缓存机制**: 非阻塞的缓存数据访问
-- **批量操作**: 减少网络请求次数
-- **校准支持**: 零点校准和数据持久化
+### 3. Unified Thread Architecture
+- **Single thread model**: One background thread polls all components
+- **Reduced contention**: Avoids concurrent UDP socket access issues
+- **Manual control**: `update_once()` for single-cycle updates without threads
+- **Configurable rate**: Default 10Hz, adjustable via `update_interval`
 
-### 4. SDK 接口设计
-- **门面模式**: 统一的 API 隐藏内部复杂性
-- **配置灵活**: 丰富的配置选项
-- **便捷方法**: 常用操作的快捷接口
-- **组件访问**: 可以直接访问底层组件
+### 4. SDK Interface
+- **Facade pattern**: Unified API hiding internal complexity
+- **Flexible configuration**: Rich configuration options
+- **Convenience methods**: Shortcuts for common operations
+- **Component access**: Direct access to underlying components
 
-## 📊 代码统计
-
-- **头文件**: 6 个 (约 800 行)
-- **实现文件**: 6 个 (约 1500 行)
-- **示例程序**: 3 个 (约 600 行)
-- **测试代码**: 2 个 (约 800 行)
-- **文档**: 4 个 (约 2000 行)
-- **总代码量**: 约 5700 行
-
-## ✅ 编译验证
-
-项目已成功编译,生成以下文件:
+## Build Artifacts
 
 ```bash
 build/
-├── libjoyson_glove_sdk.so      # 共享库
-├── basic_motor_control          # 示例程序 1
-├── read_sensors                 # 示例程序 2
-└── servo_mode_demo              # 示例程序 3
+├── libjoyson_glove_sdk.so      # Shared library
+├── basic_motor_control          # Example: basic motor control
+├── read_sensors                 # Example: sensor reading
+├── test_motor_controller        # Example: motor controller test
+├── test_encoder_reader          # Example: encoder reader test
+├── test_imu_reader              # Example: IMU reader test
+├── test_protocol                # Unit test: protocol
+└── test_udp_client              # Unit test: UDP client
 ```
 
-编译输出:
-```
-[100%] Built target joyson_glove_sdk
-[100%] Built target basic_motor_control
-[100%] Built target read_sensors
-[100%] Built target servo_mode_demo
-```
-
-## 🎓 使用示例
-
-### 最简示例
+## Minimal Usage Example
 
 ```cpp
 #include "joyson_glove/glove_sdk.hpp"
@@ -179,10 +180,10 @@ int main() {
         return 1;
     }
 
-    // 控制电机
+    // Control motors
     sdk.set_motor_position(1, 1000);
 
-    // 读取传感器
+    // Read sensors
     auto angles = sdk.get_encoder_angles();
     auto imu = sdk.get_imu_orientation();
 
@@ -191,59 +192,39 @@ int main() {
 }
 ```
 
-## 🚀 后续工作建议
+## Known Limitations
 
-### 短期 (1-2 周)
-1. **硬件测试**: 连接真实硬件进行集成测试
-2. **性能优化**: 测量延迟和吞吐量,优化网络通信
-3. **错误处理**: 完善错误恢复机制
-4. **日志系统**: 集成 spdlog 替换 std::cout/cerr
+1. **WiFi and LRA modules**: Not implemented
+2. **Auto-reconnect**: User must handle network disconnection manually
+3. **Platform support**: Linux only (uses POSIX sockets)
+4. **Firmware bugs**: Length and checksum workarounds for encoder/IMU responses
+5. **Calibration persistence**: In-memory only (no file save/load)
 
-### 中期 (1-2 月)
-1. **ROS2 集成**: 创建 ROS2 wrapper 包
-2. **可视化工具**: 开发数据可视化和调试工具
-3. **性能测试**: 长时间稳定性测试
-4. **文档完善**: 添加更多示例和教程
+## Future Work
 
-### 长期 (3-6 月)
-1. **WiFi 模块**: 实现 WiFi 通信支持 (当前为 TODO)
-2. **LRA 模块**: 实现 LRA 振动反馈支持 (当前为 TODO)
-3. **高级功能**: 轨迹规划、力控制算法
-4. **多语言绑定**: Python/Rust 绑定
+### Short-term
+1. **Hardware testing**: Integration testing with real hardware
+2. **Performance optimization**: Latency and throughput measurement
+3. **Error recovery**: Improved reconnection mechanism
 
-## 📝 已知限制
+### Medium-term
+1. **ROS2 integration**: Create ROS2 wrapper package
+2. **Visualization tools**: Data visualization and debugging
+3. **Long-term stability testing**: Extended operation validation
 
-1. **WiFi 和 LRA 模块**: 未实现 (标记为 TODO)
-2. **自动重连**: 需要用户手动处理网络断开
-3. **平台支持**: 仅支持 Linux (使用 POSIX socket)
-4. **日志系统**: 当前使用简单的 std::cout/cerr
-
-## 🎉 项目成果
-
-本项目成功实现了:
-
-1. ✅ **完整的 C++ SDK**: 覆盖所有核心功能
-2. ✅ **清晰的架构**: 分层设计,易于维护和扩展
-3. ✅ **线程安全**: 所有操作都是线程安全的
-4. ✅ **丰富的文档**: README, 快速入门, API 参考
-5. ✅ **示例程序**: 3 个完整的示例演示各种用法
-6. ✅ **单元测试**: 协议和通信层的测试覆盖
-7. ✅ **编译通过**: 无警告无错误
-
-## 📞 技术支持
-
-如需技术支持,请:
-1. 查看文档: README.md, QUICKSTART.md, API_REFERENCE.md
-2. 运行示例程序: examples/
-3. 查看测试代码: tests/
-4. 提交 Issue 或联系开发团队
+### Long-term
+1. **WiFi module**: WiFi communication support
+2. **LRA module**: LRA vibration feedback support
+3. **Advanced control**: Trajectory planning, force control algorithms
+4. **Multi-language bindings**: Python/Rust bindings
+5. **Cross-platform**: Windows/macOS support
 
 ---
 
-**项目状态**: ✅ 核心功能完成,可以开始硬件测试
+**Project status**: Core functionality complete, hardware tested
 
-**下一步**: 连接真实硬件进行集成测试和性能验证
+**Current version**: 1.1.0
 
-**开发时间**: 约 4 小时 (2026-02-27)
+**Last updated**: 2026-03-07
 
-**代码质量**: 高 (遵循 C++17 标准,清晰的命名,完整的注释)
+**Code quality**: High (C++17 standard, clear naming, comprehensive documentation)

@@ -19,9 +19,9 @@ cmake --version  # 需要 3.16+
 ```bash
 # Ubuntu/Debian
 sudo apt-get update
-sudo apt-get install build-essential cmake libspdlog-dev
+sudo apt-get install build-essential cmake
 
-# 可选: 安装 Google Test (用于单元测试)
+# 安装 Google Test (required for unit tests)
 sudo apt-get install libgtest-dev
 ```
 
@@ -46,7 +46,9 @@ ls -lh
 # - libjoyson_glove_sdk.so (共享库)
 # - basic_motor_control (示例程序)
 # - read_sensors (示例程序)
-# - servo_mode_demo (示例程序)
+# - test_motor_controller (示例程序)
+# - test_encoder_reader (示例程序)
+# - test_imu_reader (示例程序)
 ```
 
 ### 4. 硬件连接
@@ -77,8 +79,8 @@ ping 192.168.10.123
 
 这个示例会:
 - 初始化 SDK
-- 设置所有电机到位置模式
-- 发送位置命令
+- 设置所有电机到力控制模式
+- 发送力/位置命令
 - 读取电机状态
 - 显示网络统计信息
 
@@ -89,22 +91,41 @@ ping 192.168.10.123
 ```
 
 这个示例会:
-- 启动后台线程自动更新传感器数据
+- 启动统一后台线程自动更新传感器数据
 - 提示你校准传感器 (按 Enter 校准)
 - 以 10Hz 频率显示编码器和 IMU 数据
 - 运行 10 秒后自动退出
 
-#### 示例 3: 伺服模式演示
+#### 示例 3: 电机控制器测试
 
 ```bash
-./servo_mode_demo
+./test_motor_controller
 ```
 
 这个示例会:
-- 设置电机到伺服模式
-- 以 50Hz 频率发送正弦轨迹命令
-- 显示控制延迟统计
-- 运行 10 秒后退出
+- 独立测试电机控制器功能
+- 逐个电机读取状态
+- 验证电机通信正常
+
+#### 示例 4: 编码器测试
+
+```bash
+./test_encoder_reader
+```
+
+这个示例会:
+- 独立测试编码器读取功能
+- 显示所有 16 通道的 ADC 值和电压
+
+#### 示例 5: IMU 测试
+
+```bash
+./test_imu_reader
+```
+
+这个示例会:
+- 独立测试 IMU 读取功能
+- 显示 roll, pitch, yaw 数据
 
 ### 6. 集成到你的项目
 
@@ -164,7 +185,7 @@ int main() {
     // 读取电机状态
     auto status = sdk.motor_controller().get_motor_status(1);
     if (status) {
-        std::cout << "电机 1 当前位置: " << status->position << std::endl;
+        std::cout << "电机 1 当前位置: " << status->actual_position << std::endl;
     }
 
     // 读取编码器数据
@@ -251,22 +272,29 @@ g++ -I/path/to/joyson_glove_sdk/include ...
 
 ### 9. 性能优化建议
 
-#### 减少网络负载
+#### 调整更新频率
 
 ```cpp
-// 方法 1: 降低更新频率
 GloveConfig config;
-config.motor_update_interval = std::chrono::milliseconds(20);  // 50Hz
-config.encoder_update_interval = std::chrono::milliseconds(20);
-config.imu_update_interval = std::chrono::milliseconds(20);
+// 降低更新频率以减少网络负载
+config.update_interval = std::chrono::milliseconds(200);  // 5Hz
 
-// 方法 2: 禁用不需要的后台线程
-config.auto_start_threads = false;
+// 或提高更新频率以获取更实时的数据
+config.update_interval = std::chrono::milliseconds(50);  // 20Hz
+```
+
+#### 手动线程控制
+
+```cpp
+GloveConfig config;
+config.auto_start_thread = false;
 GloveSDK sdk(config);
 sdk.initialize();
 
-// 只启动需要的线程
-sdk.encoder_reader().start_update_thread();
+// 手动启动/停止统一更新线程
+sdk.start();
+// ... 使用 SDK ...
+sdk.stop();
 ```
 
 #### 批量控制电机
@@ -277,7 +305,7 @@ for (int i = 1; i <= 6; ++i) {
     sdk.set_motor_position(i, positions[i-1]);
 }
 
-// 推荐: 批量控制 (1 次网络请求)
+// 推荐: 批量控制
 std::array<uint16_t, NUM_MOTORS> positions = {500, 600, 700, 800, 900, 1000};
 sdk.set_all_positions(positions);
 ```
@@ -294,19 +322,17 @@ auto status = sdk.motor_controller().get_cached_status(1);
 
 ### 10. 下一步
 
-- 阅读完整 API 文档: [README.md](README.md)
+- 阅读完整 API 文档: [API_REFERENCE.md](API_REFERENCE.md)
+- 查看协议规范: [PROTOCOL.md](PROTOCOL.md)
 - 查看示例代码: `examples/` 目录
-- 运行单元测试: `make test` (需要安装 Google Test)
-- 集成到 ROS2: 创建 ROS2 wrapper 包
+- 运行单元测试: `make test`
+- 排查问题: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
 
 ### 11. 获取帮助
 
 如果遇到问题:
 1. 查看日志输出 (SDK 会打印详细错误信息)
 2. 检查网络统计: `sdk.get_network_statistics()`
-3. 查看 GitHub Issues
-4. 联系技术支持
-
----
-
-**祝你使用愉快! 🎉**
+3. 查看 [TROUBLESHOOTING.md](TROUBLESHOOTING.md) 排查指南
+4. 查看 GitHub Issues
+5. 联系技术支持

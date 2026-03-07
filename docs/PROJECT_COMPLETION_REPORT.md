@@ -3,8 +3,8 @@
 ## 📊 项目概览
 
 **项目名称**: Joyson Glove SDK
-**版本**: 1.0.0
-**完成日期**: 2026-02-27
+**版本**: 1.1.0
+**完成日期**: 2026-03-07
 **开发时间**: 约 4 小时
 **状态**: ✅ 核心功能完成,可投入使用
 
@@ -29,19 +29,19 @@
 - [x] 线程安全保护
 - [x] 连接管理
 
-#### 3. 设备控制层 ✅
+#### 3. 设备控制层
 - [x] 电机控制器 (6 个 LAF 执行器)
   - 单电机和批量控制
-  - 4 种模式支持 (位置、伺服、速度、力)
-  - 状态缓存和后台更新
+  - 6 种模式支持 (位置、伺服、速度、力、电压、速度力控)
+  - 状态缓存和统一后台更新
+  - 输入验证 (motor ID, mode, force, position)
 - [x] 编码器读取器 (16 通道)
-  - 电压读取和角度转换
-  - 零点校准
-  - 数据持久化
+  - ADC 原始值读取和电压转换
+  - 电压到角度转换
+  - 零点校准 (内存管理)
 - [x] IMU 读取器 (3 轴姿态)
   - 姿态数据读取
-  - 零点校准
-  - 漂移补偿
+  - 零点校准 (内存管理)
 
 #### 4. SDK 接口层 ✅
 - [x] 统一的门面接口
@@ -53,7 +53,9 @@
 #### 5. 示例程序 ✅
 - [x] basic_motor_control.cpp - 基础电机控制
 - [x] read_sensors.cpp - 传感器数据读取
-- [x] servo_mode_demo.cpp - 伺服模式演示
+- [x] test_motor_controller.cpp - 独立电机控制器测试
+- [x] test_encoder_reader.cpp - 独立编码器测试
+- [x] test_imu_reader.cpp - 独立 IMU 测试
 
 #### 6. 测试代码 ✅
 - [x] test_protocol.cpp - 协议层单元测试
@@ -89,7 +91,7 @@
 ### 代码统计
 - **C++ 源文件**: 6 个 (src/)
 - **C++ 头文件**: 6 个 (include/joyson_glove/)
-- **示例程序**: 3 个 (examples/)
+- **示例程序**: 5 个 (examples/)
 - **测试代码**: 2 个 (tests/)
 - **总代码行数**: 约 4,143 行
 
@@ -134,16 +136,12 @@
 ```
 Main Thread (用户应用)
     │
-    ├─→ Motor Status Thread (100Hz)
-    │   └─→ 轮询 6 个电机状态
-    │
-    ├─→ Encoder Update Thread (100Hz)
-    │   └─→ 读取 16 通道编码器
-    │
-    └─→ IMU Update Thread (100Hz)
+    └─→ Unified Update Thread (10Hz)
+        ├─→ 轮询 6 个电机状态
+        ├─→ 读取 16 通道编码器
         └─→ 读取 IMU 姿态数据
 
-所有线程通过 Mutex 保护共享数据
+所有线程通过 Mutex + Atomic 保护共享数据
 ```
 
 ### 设计模式
@@ -194,7 +192,9 @@ $ cd build && make -j$(nproc)
 [100%] Built target joyson_glove_sdk
 [100%] Built target basic_motor_control
 [100%] Built target read_sensors
-[100%] Built target servo_mode_demo
+[100%] Built target test_motor_controller
+[100%] Built target test_encoder_reader
+[100%] Built target test_imu_reader
 ```
 
 ✅ **编译成功,无警告无错误**
@@ -203,10 +203,12 @@ $ cd build && make -j$(nproc)
 
 ```
 build/
-├── libjoyson_glove_sdk.so      # 共享库 (约 500KB)
-├── basic_motor_control          # 示例 1 (约 100KB)
-├── read_sensors                 # 示例 2 (约 100KB)
-└── servo_mode_demo              # 示例 3 (约 100KB)
+├── libjoyson_glove_sdk.so      # Shared library
+├── basic_motor_control          # Example: basic motor control
+├── read_sensors                 # Example: sensor reading
+├── test_motor_controller        # Example: motor controller test
+├── test_encoder_reader          # Example: encoder reader test
+└── test_imu_reader              # Example: IMU reader test
 ```
 
 ---
@@ -252,9 +254,11 @@ int main() {
 ### 完整示例
 
 参见 `examples/` 目录:
-- `basic_motor_control.cpp` - 80 行
-- `read_sensors.cpp` - 120 行
-- `servo_mode_demo.cpp` - 150 行
+- `basic_motor_control.cpp` - Basic motor control
+- `read_sensors.cpp` - Sensor data reading
+- `test_motor_controller.cpp` - Standalone motor test
+- `test_encoder_reader.cpp` - Standalone encoder test
+- `test_imu_reader.cpp` - Standalone IMU test
 
 ---
 
@@ -270,8 +274,8 @@ int main() {
 2. **需要 C++17**: 使用了 C++17 特性
 
 ### 性能限制
-1. **最大更新频率**: 100Hz (受网络延迟限制)
-2. **伺服模式**: 最高 50Hz (协议要求 ≥20ms)
+1. **更新频率**: 默认 10Hz (可通过 update_interval 调整)
+2. **伺服模式**: 最高 50Hz (协议要求 >=20ms)
 
 ---
 
@@ -281,7 +285,6 @@ int main() {
 - [ ] 连接真实硬件进行集成测试
 - [ ] 性能测试和优化
 - [ ] 完善错误处理和恢复机制
-- [ ] 集成 spdlog 日志系统
 
 ### 中期 (1-2 月)
 - [ ] 开发 ROS2 wrapper 包
@@ -404,7 +407,7 @@ Joyson Glove SDK 项目已成功完成核心功能开发,包括:
 
 ---
 
-**报告生成时间**: 2026-02-27
-**项目状态**: ✅ 完成
+**报告生成时间**: 2026-03-07
+**项目状态**: ✅ v1.1.0 完成
 **可用性**: ✅ 可投入使用
 **推荐度**: ⭐⭐⭐⭐⭐

@@ -49,7 +49,6 @@ We are committed to providing a welcoming and inclusive environment for all cont
    - Git
 
 2. **Optional Tools**:
-   - spdlog (for logging)
    - Google Test (for unit tests)
    - clang-format (for code formatting)
    - clang-tidy (for static analysis)
@@ -63,7 +62,7 @@ cd joyson_glove_sdk
 
 # Install dependencies
 sudo apt-get update
-sudo apt-get install build-essential cmake libspdlog-dev libgtest-dev
+sudo apt-get install build-essential cmake libgtest-dev
 
 # Install development tools
 sudo apt-get install clang-format clang-tidy
@@ -241,10 +240,7 @@ namespace joyson_glove {
 #include <vector>
 #include <memory>
 
-// 4. Other library headers
-#include <spdlog/spdlog.h>
-
-// 5. Project headers
+// 4. Project headers
 #include "joyson_glove/udp_client.hpp"
 ```
 
@@ -313,16 +309,17 @@ private:
 
 ```cpp
 // Use RAII for resource management
+// Note: Copy and move are disabled for all SDK components
 class UdpClient {
 public:
     UdpClient() { /* acquire resources */ }
     ~UdpClient() { disconnect(); /* release resources */ }
 
-    // Disable copy, allow move
+    // Disable copy and move
     UdpClient(const UdpClient&) = delete;
     UdpClient& operator=(const UdpClient&) = delete;
-    UdpClient(UdpClient&&) noexcept;
-    UdpClient& operator=(UdpClient&&) noexcept;
+    UdpClient(UdpClient&&) = delete;
+    UdpClient& operator=(UdpClient&&) = delete;
 };
 ```
 

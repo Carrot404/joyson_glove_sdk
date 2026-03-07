@@ -27,11 +27,13 @@ Creates a new SDK instance with the specified configuration.
 **Parameters:**
 - `config`: Configuration structure (optional, uses defaults if not provided)
 
+**Note:** Copy and move operations are disabled. SDK instances must be used in-place.
+
 **Example:**
 ```cpp
 GloveConfig config;
 config.server_ip = "192.168.10.123";
-config.auto_start_threads = true;
+config.auto_start_thread = true;
 GloveSDK sdk(config);
 ```
 
@@ -48,9 +50,9 @@ Initialize SDK and connect to hardware.
 **Returns:** `true` if initialization successful, `false` otherwise
 
 **Side Effects:**
-- Creates UDP connection
-- Initializes all motors to position mode
-- Starts background threads (if `auto_start_threads` is true)
+- Creates UDP connection with local port binding
+- Initializes all motors to force mode (initial force 10)
+- Starts unified background thread (if `auto_start_thread` is true)
 
 **Example:**
 ```cpp
@@ -69,7 +71,7 @@ void shutdown();
 Shutdown SDK and disconnect from hardware.
 
 **Side Effects:**
-- Stops all background threads
+- Stops the unified background thread
 - Closes UDP connection
 - Releases all resources
 
@@ -84,11 +86,66 @@ sdk.shutdown();
 bool is_initialized() const;
 ```
 
-Check if SDK is initialized.
+Check if SDK is initialized (thread-safe with `memory_order_acquire`).
 
 **Returns:** `true` if initialized, `false` otherwise
 
+#### Unified Thread Control
+
+##### start()
+
+```cpp
+void start();
+```
+
+Start the unified update thread. The thread polls all components (motors, encoders, IMU) at the configured `update_interval`.
+
+##### stop()
+
+```cpp
+void stop();
+```
+
+Stop the unified update thread.
+
+##### is_running()
+
+```cpp
+bool is_running() const;
+```
+
+Check if the unified update thread is running.
+
+**Returns:** `true` if thread is running, `false` otherwise
+
 #### Motor Control Methods
+
+##### set_motor_mode()
+
+```cpp
+bool set_motor_mode(uint8_t motor_id, uint8_t mode);
+```
+
+Set motor control mode.
+
+**Parameters:**
+- `motor_id`: Motor ID (1-6)
+- `mode`: Control mode (see [Motor Modes](#motor-modes))
+
+**Returns:** `true` if command sent successfully, `false` otherwise
+
+##### set_all_modes()
+
+```cpp
+bool set_all_modes(uint8_t mode);
+```
+
+Set the same control mode for all motors.
+
+**Parameters:**
+- `mode`: Control mode to apply to all motors
+
+**Returns:** `true` if all commands sent successfully, `false` otherwise
 
 ##### set_motor_position()
 
@@ -185,7 +242,7 @@ Set target forces for all motors (batch operation).
 ##### get_encoder_angles()
 
 ```cpp
-std::array<float, NUM_ENCODER_CHANNELS> get_encoder_angles();
+std::array<float, NUM_ENCODER_CHANNELS> get_encoder_angles() const;
 ```
 
 Get cached encoder angles (non-blocking).
@@ -201,7 +258,7 @@ std::cout << "CH0: " << angles[0] << "°" << std::endl;
 ##### get_imu_orientation()
 
 ```cpp
-ImuData get_imu_orientation();
+ImuData get_imu_orientation() const;
 ```
 
 Get cached IMU orientation (non-blocking).
@@ -230,7 +287,6 @@ Calibrate all sensors (encoders and IMU).
 **Side Effects:**
 - Sets current encoder voltages as zero point
 - Sets current IMU orientation as zero
-- Saves calibration to files
 
 **Example:**
 ```cpp
@@ -268,7 +324,7 @@ MotorController& motor_controller();
 const MotorController& motor_controller() const;
 ```
 
-Get reference to motor controller.
+Get reference to motor controller. SDK must be initialized (asserts in debug builds).
 
 **Returns:** Reference to MotorController instance
 
@@ -338,6 +394,16 @@ void reset_network_statistics();
 
 Reset network statistics counters to zero.
 
+##### get_config()
+
+```cpp
+const GloveConfig& get_config() const;
+```
+
+Get the current SDK configuration.
+
+**Returns:** Const reference to GloveConfig
+
 ---
 
 ## MotorController
@@ -345,6 +411,26 @@ Reset network statistics counters to zero.
 Motor controller for LAF actuators.
 
 ### Key Methods
+
+#### initialize()
+
+```cpp
+bool initialize();
+```
+
+Initialize all motors (sets to force mode with initial force 10 by default).
+
+**Returns:** `true` if all motors initialized successfully
+
+#### update_once()
+
+```cpp
+bool update_once();
+```
+
+Perform a single update cycle for all motors. Useful for manual update control.
+
+**Returns:** `true` if at least one motor status was successfully read
 
 #### set_motor_mode()
 
@@ -361,6 +447,8 @@ Set motor control mode.
   - `MODE_SERVO` (0x01): Servo mode (high-frequency)
   - `MODE_SPEED` (0x02): Speed control
   - `MODE_FORCE` (0x03): Force control
+  - `MODE_VOLTAGE` (0x04): Voltage control
+  - `MODE_SPEED_FORCE` (0x05): Speed-force control
 
 **Returns:** `true` if successful, `false` otherwise
 
@@ -368,6 +456,19 @@ Set motor control mode.
 ```cpp
 sdk.motor_controller().set_motor_mode(1, MODE_SERVO);
 ```
+
+#### set_all_modes()
+
+```cpp
+bool set_all_modes(uint8_t mode);
+```
+
+Set the same mode for all motors.
+
+**Parameters:**
+- `mode`: Control mode to apply
+
+**Returns:** `true` if all commands succeeded
 
 #### get_motor_status()
 
@@ -386,9 +487,9 @@ Read motor status from hardware (blocking).
 ```cpp
 auto status = sdk.motor_controller().get_motor_status(1);
 if (status) {
-    std::cout << "Position: " << status->position << std::endl;
-    std::cout << "Velocity: " << status->velocity << std::endl;
-    std::cout << "Force: " << status->force << std::endl;
+    std::cout << "Position: " << status->actual_position << std::endl;
+    std::cout << "Force: " << status->force_value << std::endl;
+    std::cout << "Temperature: " << (int)status->temperature << std::endl;
 }
 ```
 
@@ -405,7 +506,30 @@ Get cached motor status (non-blocking).
 
 **Returns:** Cached MotorStatus
 
-**Note:** Data is updated by background thread at configured rate (default 100Hz)
+**Note:** Data is updated by unified background thread at configured rate (default 10Hz)
+
+#### get_all_cached_status()
+
+```cpp
+std::array<MotorStatus, NUM_MOTORS> get_all_cached_status() const;
+```
+
+Get cached status for all motors.
+
+**Returns:** Array of 6 MotorStatus
+
+#### get_status_age()
+
+```cpp
+std::chrono::milliseconds get_status_age(uint8_t motor_id) const;
+```
+
+Get time since last status update for a motor.
+
+**Parameters:**
+- `motor_id`: Motor ID (1-6)
+
+**Returns:** Duration since last update
 
 #### start_status_update_thread()
 
@@ -423,6 +547,14 @@ void stop_status_update_thread();
 
 Stop background status update thread.
 
+#### is_thread_running()
+
+```cpp
+bool is_thread_running() const;
+```
+
+Check if status update thread is running.
+
 ---
 
 ## EncoderReader
@@ -431,6 +563,16 @@ Encoder reader for 16-channel ADC data.
 
 ### Key Methods
 
+#### update_once()
+
+```cpp
+bool update_once();
+```
+
+Perform a single update cycle for encoder data.
+
+**Returns:** `true` if encoder data was successfully read
+
 #### read_encoders()
 
 ```cpp
@@ -438,6 +580,8 @@ std::optional<EncoderData> read_encoders();
 ```
 
 Read encoder data from hardware (blocking).
+
+**WARNING:** Do not call while the update thread is running, as concurrent send/receive on the UDP socket may cause response mismatch. Use `get_cached_data()` instead.
 
 **Returns:** EncoderData if successful, `std::nullopt` otherwise
 
@@ -451,15 +595,19 @@ Get cached encoder data (non-blocking).
 
 **Returns:** Cached EncoderData
 
-#### get_cached_angles()
+#### adc_to_voltages()
 
 ```cpp
-std::array<float, NUM_ENCODER_CHANNELS> get_cached_angles() const;
+std::array<float, NUM_ENCODER_CHANNELS> adc_to_voltages(
+    const std::array<uint16_t, NUM_ENCODER_CHANNELS>& adc_values) const;
 ```
 
-Get cached encoder angles (non-blocking).
+Convert ADC raw values to voltages.
 
-**Returns:** Array of 16 angles in degrees
+**Parameters:**
+- `adc_values`: Array of 16 ADC values (16-bit, 0-65535)
+
+**Returns:** Array of 16 voltages [0, 4V]
 
 #### voltages_to_angles()
 
@@ -477,6 +625,16 @@ Convert voltages to angles.
 
 **Conversion Formula:** `angle = (voltage / 4.0) * 360.0`
 
+#### get_cached_angles()
+
+```cpp
+std::array<float, NUM_ENCODER_CHANNELS> get_cached_angles() const;
+```
+
+Get cached encoder angles (non-blocking).
+
+**Returns:** Array of 16 angles in degrees
+
 #### calibrate_zero_point()
 
 ```cpp
@@ -489,33 +647,37 @@ Calibrate encoder zero point.
 
 **Side Effects:**
 - Sets current voltages as zero point
-- Saves calibration to file
 
-#### load_calibration()
-
-```cpp
-bool load_calibration(const std::string& filename = "");
-```
-
-Load calibration from file.
-
-**Parameters:**
-- `filename`: Calibration file path (optional, uses default if empty)
-
-**Returns:** `true` if successful, `false` otherwise
-
-#### save_calibration()
+#### get_calibration()
 
 ```cpp
-bool save_calibration(const std::string& filename = "") const;
+EncoderCalibration get_calibration() const;
 ```
 
-Save calibration to file.
+Get current calibration data.
+
+**Returns:** EncoderCalibration structure
+
+#### set_calibration()
+
+```cpp
+void set_calibration(const EncoderCalibration& calibration);
+```
+
+Set calibration data programmatically.
 
 **Parameters:**
-- `filename`: Calibration file path (optional, uses default if empty)
+- `calibration`: EncoderCalibration structure to apply
 
-**Returns:** `true` if successful, `false` otherwise
+#### get_data_age()
+
+```cpp
+std::chrono::milliseconds get_data_age() const;
+```
+
+Get time since last data update.
+
+**Returns:** Duration since last update
 
 ---
 
@@ -525,6 +687,16 @@ IMU reader for 3-axis orientation data.
 
 ### Key Methods
 
+#### update_once()
+
+```cpp
+bool update_once();
+```
+
+Perform a single update cycle for IMU data.
+
+**Returns:** `true` if IMU data was successfully read
+
 #### read_imu()
 
 ```cpp
@@ -532,6 +704,8 @@ std::optional<ImuData> read_imu();
 ```
 
 Read IMU data from hardware (blocking).
+
+**WARNING:** Do not call while the update thread is running, as concurrent send/receive on the UDP socket may cause response mismatch. Use `get_cached_data()` instead.
 
 **Returns:** ImuData if successful, `std::nullopt` otherwise
 
@@ -557,7 +731,37 @@ Calibrate IMU zero orientation.
 
 **Side Effects:**
 - Sets current orientation as zero
-- Saves calibration to file
+
+#### get_calibration()
+
+```cpp
+ImuCalibration get_calibration() const;
+```
+
+Get current calibration data.
+
+**Returns:** ImuCalibration structure
+
+#### set_calibration()
+
+```cpp
+void set_calibration(const ImuCalibration& calibration);
+```
+
+Set calibration data programmatically.
+
+**Parameters:**
+- `calibration`: ImuCalibration structure to apply
+
+#### get_data_age()
+
+```cpp
+std::chrono::milliseconds get_data_age() const;
+```
+
+Get time since last data update.
+
+**Returns:** Duration since last update
 
 ---
 
@@ -567,12 +771,14 @@ Calibrate IMU zero orientation.
 
 ```cpp
 struct MotorStatus {
-    uint8_t motor_id;
-    uint16_t position;      // Current position [0, 2000]
-    int16_t velocity;       // Current velocity (steps/s)
-    uint16_t force;         // Current force [0, 4095]
-    uint8_t mode;           // Current mode
-    uint8_t state;          // Motor state flags
+    uint8_t motor_id = 0;
+    uint16_t target_position = 0;   // Target position
+    uint16_t actual_position = 0;   // Actual position [0, 2000]
+    uint16_t actual_current = 0;    // Actual current
+    uint16_t force_value = 0;       // Force sensor value [0, 4095]
+    uint16_t force_raw = 0;         // Force sensor raw value
+    uint8_t temperature = 0;        // Temperature
+    uint8_t fault_code = 0;         // Fault code
     std::chrono::steady_clock::time_point timestamp;
 };
 ```
@@ -581,7 +787,8 @@ struct MotorStatus {
 
 ```cpp
 struct EncoderData {
-    std::array<float, NUM_ENCODER_CHANNELS> voltages;  // ADC voltages [0, 4V]
+    std::array<uint16_t, NUM_ENCODER_CHANNELS> adc_values;  // ADC raw values
+    std::array<float, NUM_ENCODER_CHANNELS> voltages;       // Voltages [0, 4V]
     std::chrono::steady_clock::time_point timestamp;
 };
 ```
@@ -594,6 +801,27 @@ struct ImuData {
     float pitch;  // Pitch angle in degrees
     float yaw;    // Yaw angle in degrees
     std::chrono::steady_clock::time_point timestamp;
+};
+```
+
+### EncoderCalibration
+
+```cpp
+struct EncoderCalibration {
+    std::array<float, NUM_ENCODER_CHANNELS> zero_voltages{};   // Zero-point voltages (default 0.0)
+    std::array<float, NUM_ENCODER_CHANNELS> scale_factors{};   // Scale factors (default 1.0)
+    bool is_calibrated = false;
+};
+```
+
+### ImuCalibration
+
+```cpp
+struct ImuCalibration {
+    float roll_offset = 0.0f;
+    float pitch_offset = 0.0f;
+    float yaw_offset = 0.0f;
+    bool is_calibrated = false;
 };
 ```
 
@@ -621,18 +849,13 @@ struct GloveConfig {
     // Network configuration
     std::string server_ip = "192.168.10.123";
     uint16_t server_port = 8080;
+    uint16_t local_port = 8080;  // Local port to bind (required for hardware)
     std::chrono::milliseconds send_timeout{100};
     std::chrono::milliseconds receive_timeout{100};
 
-    // Component configuration
-    bool auto_start_threads = true;
-    std::chrono::milliseconds motor_update_interval{10};    // 100Hz
-    std::chrono::milliseconds encoder_update_interval{10};  // 100Hz
-    std::chrono::milliseconds imu_update_interval{10};      // 100Hz
-
-    // Calibration files
-    std::string encoder_calibration_file = "encoder_calibration.bin";
-    std::string imu_calibration_file = "imu_calibration.bin";
+    // Unified thread configuration
+    bool auto_start_thread = true;
+    std::chrono::milliseconds update_interval{100};  // 10Hz unified update rate
 };
 ```
 
@@ -643,21 +866,47 @@ struct GloveConfig {
 GloveConfig config;
 config.server_ip = "192.168.1.100";
 config.server_port = 9000;
+config.local_port = 9000;
 
 // Example 2: Longer timeouts for slow networks
 config.send_timeout = std::chrono::milliseconds(500);
 config.receive_timeout = std::chrono::milliseconds(500);
 
-// Example 3: Lower update rate to reduce network load
-config.motor_update_interval = std::chrono::milliseconds(20);  // 50Hz
-config.encoder_update_interval = std::chrono::milliseconds(20);
-config.imu_update_interval = std::chrono::milliseconds(20);
+// Example 3: Higher update rate
+config.update_interval = std::chrono::milliseconds(50);  // 20Hz
 
 // Example 4: Manual thread control
-config.auto_start_threads = false;
+config.auto_start_thread = false;
 GloveSDK sdk(config);
 sdk.initialize();
-sdk.encoder_reader().start_update_thread();  // Only start encoder thread
+sdk.start();  // Manually start unified update thread
+```
+
+### MotorControllerConfig
+
+```cpp
+struct MotorControllerConfig {
+    bool auto_start_thread = true;
+    std::chrono::milliseconds update_interval{100};  // 10Hz default
+};
+```
+
+### EncoderReaderConfig
+
+```cpp
+struct EncoderReaderConfig {
+    bool auto_start_thread = true;
+    std::chrono::milliseconds update_interval{100};  // 10Hz default
+};
+```
+
+### ImuReaderConfig
+
+```cpp
+struct ImuReaderConfig {
+    bool auto_start_thread = true;
+    std::chrono::milliseconds update_interval{100};  // 10Hz default
+};
 ```
 
 ---
@@ -724,13 +973,17 @@ t1.join();
 t2.join();
 ```
 
-### Background Threads
+### Unified Background Thread
 
-The SDK uses background threads for asynchronous updates:
+The SDK uses a single unified background thread for asynchronous updates (since v1.1.0):
 
-- **Motor Status Thread**: Updates motor status cache at configured rate
-- **Encoder Update Thread**: Updates encoder data cache at configured rate
-- **IMU Update Thread**: Updates IMU data cache at configured rate
+- **Unified Update Thread**: Polls all components (motors, encoders, IMU) at the configured `update_interval` (default 10Hz)
+
+This replaces the previous per-component thread model, reducing thread overhead and avoiding UDP socket contention.
+
+### Concurrent UDP Warning
+
+**Important:** Do not call blocking read methods (`read_encoders()`, `read_imu()`, `get_motor_status()`) while the update thread is running. Use cached data methods instead (`get_cached_data()`, `get_cached_angles()`, `get_cached_status()`).
 
 ### Data Freshness
 
@@ -738,7 +991,7 @@ Check data age to ensure freshness:
 
 ```cpp
 auto age = sdk.encoder_reader().get_data_age();
-if (age > std::chrono::milliseconds(100)) {
+if (age > std::chrono::milliseconds(200)) {
     std::cerr << "Warning: Encoder data is stale (" << age.count() << " ms old)" << std::endl;
 }
 ```
@@ -747,20 +1000,55 @@ if (age > std::chrono::milliseconds(100)) {
 
 ## Constants
 
+### Motor Modes
+
 ```cpp
-// Hardware limits
+constexpr uint8_t MODE_POSITION = 0x00;
+constexpr uint8_t MODE_SERVO = 0x01;
+constexpr uint8_t MODE_SPEED = 0x02;
+constexpr uint8_t MODE_FORCE = 0x03;
+constexpr uint8_t MODE_VOLTAGE = 0x04;
+constexpr uint8_t MODE_SPEED_FORCE = 0x05;
+```
+
+### Hardware Limits
+
+```cpp
 constexpr uint8_t NUM_MOTORS = 6;
 constexpr uint8_t NUM_ENCODER_CHANNELS = 16;
 constexpr uint16_t MOTOR_POSITION_MAX = 2000;
 constexpr uint16_t MOTOR_FORCE_MAX = 4095;
 constexpr float ENCODER_VOLTAGE_MAX = 4.0f;
 constexpr float ENCODER_ANGLE_MAX = 360.0f;
+```
 
-// Motor modes
-constexpr uint8_t MODE_POSITION = 0x00;
-constexpr uint8_t MODE_SERVO = 0x01;
-constexpr uint8_t MODE_SPEED = 0x02;
-constexpr uint8_t MODE_FORCE = 0x03;
+### Protocol Constants
+
+```cpp
+constexpr uint8_t PACKET_HEADER = 0xEE;
+constexpr uint8_t PACKET_TAIL = 0x7E;
+constexpr uint8_t MODULE_ID = 0x01;
+
+// Target IDs
+constexpr uint8_t TARGET_MOTOR = 0x01;
+constexpr uint8_t TARGET_ENCODER = 0x02;
+constexpr uint8_t TARGET_IMU = 0x03;
+constexpr uint8_t TARGET_LRA = 0x04;
+
+// Motor Commands
+constexpr uint8_t CMD_READ_MOTOR_ID = 0x10;
+constexpr uint8_t CMD_READ_STATUS = 0x20;
+constexpr uint8_t CMD_SET_MODE = 0x30;
+constexpr uint8_t CMD_SET_POSITION = 0x31;
+constexpr uint8_t CMD_SET_SPEED = 0x32;
+constexpr uint8_t CMD_SET_FORCE = 0x33;
+
+// Motor Registers
+constexpr uint8_t REG_MOTOR_ID = 0x16;
+constexpr uint8_t REG_MODE = 0x25;
+constexpr uint8_t REG_FORCE = 0x27;
+constexpr uint8_t REG_SPEED = 0x28;
+constexpr uint8_t REG_POSITION = 0x29;
 ```
 
 ---
@@ -785,17 +1073,17 @@ sdk.initialize();  // Ignoring return value
 // Good: Non-blocking, uses cached data
 auto angles = sdk.get_encoder_angles();
 
-// Bad: Blocking, sends network request
+// Bad: Blocking, sends network request (avoid while thread is running)
 auto data = sdk.encoder_reader().read_encoders();
 ```
 
 ### 3. Batch Operations When Possible
 
 ```cpp
-// Good: Single network request
+// Good: Batch control
 sdk.set_all_positions(positions);
 
-// Bad: 6 network requests
+// Less efficient: Individual control (6 network requests)
 for (int i = 1; i <= 6; ++i) {
     sdk.set_motor_position(i, positions[i-1]);
 }
@@ -824,7 +1112,7 @@ sdk.calibrate_all();
 
 ## Version Information
 
-- **SDK Version**: 1.0.0
+- **SDK Version**: 1.1.0
 - **Protocol Version**: WGS Communication Protocol
 - **C++ Standard**: C++17
 - **Supported Platforms**: Linux (Ubuntu 20.04+)
@@ -833,6 +1121,7 @@ sdk.calibrate_all();
 
 ## See Also
 
-- [README.md](README.md) - Project overview and installation
 - [QUICKSTART.md](QUICKSTART.md) - Quick start guide
-- [examples/](examples/) - Example programs
+- [PROTOCOL.md](PROTOCOL.md) - Protocol specification
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Troubleshooting guide
+- [examples/](../examples/) - Example programs

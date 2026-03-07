@@ -738,6 +738,6 @@ def calculate_motor_checksum(inner_data):
 
 ---
 
-**版本**: 1.0
-**最后更新**: 2026-02-28
+**版本**: 1.1
+**最后更新**: 2026-03-07
 **维护者**: Joyson Glove SDK Team

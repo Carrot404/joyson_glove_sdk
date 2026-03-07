@@ -153,18 +153,28 @@ main() {
 
         # List generated files
         print_info "Generated files:"
-        ls -lh libjoyson_glove_sdk.so 2>/dev/null || true
-        ls -lh basic_motor_control 2>/dev/null || true
-        ls -lh read_sensors 2>/dev/null || true
-        ls -lh servo_mode_demo 2>/dev/null || true
-        ls -lh test_protocol 2>/dev/null || true
-        ls -lh test_udp_client 2>/dev/null || true
+        ls -lh libjoyson_glove_sdk.so* 2>/dev/null || true
+
+        if [ "$BUILD_EXAMPLES" = "ON" ]; then
+            print_info "Example programs:"
+            ls -lh basic_motor_control 2>/dev/null || true
+            ls -lh read_sensors 2>/dev/null || true
+            ls -lh test_encoder_reader 2>/dev/null || true
+            ls -lh test_imu_reader 2>/dev/null || true
+            ls -lh test_motor_controller 2>/dev/null || true
+        fi
+
+        if [ "$BUILD_TESTS" = "ON" ]; then
+            print_info "Test programs:"
+            ls -lh test_protocol 2>/dev/null || true
+            ls -lh test_udp_client 2>/dev/null || true
+        fi
 
         # Run tests if built
-        if [ "$BUILD_TESTS" = "ON" ] && [ -f "test_protocol" ]; then
+        if [ "$BUILD_TESTS" = "ON" ]; then
             print_info "Running tests..."
             if command_exists ctest; then
-                ctest --output-on-failure
+                ctest --output-on-failure --timeout 60
             else
                 print_warn "ctest not found, skipping tests"
             fi
@@ -181,8 +191,8 @@ main() {
         echo ""
         print_info "Next steps:"
         echo "  1. Run examples: cd build && ./basic_motor_control"
-        echo "  2. Run tests: cd build && ctest"
-        echo "  3. Install: cd build && sudo make install"
+        echo "  2. Run tests: cd build && ctest --timeout 60"
+        echo "  3. Install: sudo ./scripts/install.sh"
     else
         print_error "Build failed!"
         exit 1

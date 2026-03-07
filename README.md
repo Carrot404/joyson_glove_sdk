@@ -4,18 +4,19 @@ C++ SDK for controlling Joyson exoskeleton glove hardware with LAF actuators, en
 
 ## Features
 
-- **Motor Control**: Control 6 LAF actuators in multiple modes (position, force, speed, servo)
+- **Motor Control**: Control 6 LAF actuators in multiple modes (position, servo, speed, force, voltage, speed-force)
 - **Sensor Reading**: Read 16-channel encoder data and 3-axis IMU orientation
 - **Thread-Safe**: All operations are thread-safe with mutex protection
-- **Asynchronous Updates**: Background threads poll sensors at configurable rates (default 100Hz)
+- **Unified Update Thread**: Single background thread polls all sensors at configurable rate (default 10Hz)
 - **Calibration Support**: Zero-point calibration for encoders and IMU
 - **Non-Blocking API**: Cached data access for real-time performance
+- **Data Freshness**: Monitor data age for each sensor component
 - **ROS2-Friendly**: Clean C++ interface easy to wrap in ROS2 nodes
 
 ## Hardware Specifications
 
 - **Motors**: 6 LAF actuators (ID 1-6)
-  - Modes: Position, Servo, Speed, Force
+  - Modes: Position, Servo, Speed, Force, Voltage, Speed-Force
   - Position range: [0, 2000] steps
   - Force range: [0, 4095]
 - **Encoders**: 16 channels (CH0-15)
@@ -28,8 +29,7 @@ C++ SDK for controlling Joyson exoskeleton glove hardware with LAF actuators, en
 
 - C++17 compiler (GCC 7+, Clang 5+)
 - CMake 3.16+
-- Linux (tested on Ubuntu 20.04+)
-- spdlog (required, for logging)
+- Linux (tested on Ubuntu 24.04+)
 - Google Test (required when `BUILD_TESTS=ON`, default ON)
 
 ## Installation
@@ -39,10 +39,10 @@ C++ SDK for controlling Joyson exoskeleton glove hardware with LAF actuators, en
 ```bash
 # Ubuntu/Debian
 sudo apt-get update
-sudo apt-get install build-essential cmake libspdlog-dev libgtest-dev
+sudo apt-get install build-essential cmake libgtest-dev
 
 # Arch Linux
-sudo pacman -S base-devel cmake spdlog gtest
+sudo pacman -S base-devel cmake gtest
 ```
 
 ### Build from Source
@@ -88,7 +88,9 @@ using namespace joyson_glove;
 
 int main() {
     // Create SDK instance
-    GloveSDK sdk;
+    GloveConfig config;
+    config.auto_start_thread = false;  // Manual control
+    GloveSDK sdk(config);
 
     // Initialize and connect to hardware
     if (!sdk.initialize()) {
@@ -102,7 +104,8 @@ int main() {
     // Read motor status
     auto status = sdk.motor_controller().get_motor_status(1);
     if (status) {
-        std::cout << "Motor 1 position: " << status->position << std::endl;
+        std::cout << "Motor 1 position: " << status->actual_position << std::endl;
+        std::cout << "Motor 1 force: " << status->force_value << std::endl;
     }
 
     // Shutdown
@@ -119,9 +122,9 @@ int main() {
 using namespace joyson_glove;
 
 int main() {
-    // Create SDK with background threads enabled
+    // Create SDK with unified background thread enabled
     GloveConfig config;
-    config.auto_start_threads = true;
+    config.auto_start_thread = true;
     GloveSDK sdk(config);
 
     if (!sdk.initialize()) {
@@ -138,46 +141,49 @@ int main() {
     std::cout << "Encoder CH0: " << encoder_angles[0] << "°" << std::endl;
     std::cout << "IMU Roll: " << imu_data.roll << "°" << std::endl;
 
+    // Check data freshness
+    auto enc_age = sdk.encoder_reader().get_data_age();
+    std::cout << "Encoder data age: " << enc_age.count() << " ms" << std::endl;
+
     sdk.shutdown();
     return 0;
 }
 ```
 
-### Servo Mode (High-Frequency Control)
+### Standalone Component Testing
+
+Each component (motor, encoder, IMU) can be used independently for testing:
 
 ```cpp
-#include "joyson_glove/glove_sdk.hpp"
-#include <chrono>
-#include <thread>
+#include "joyson_glove/motor_controller.hpp"
+#include "joyson_glove/udp_client.hpp"
 
 using namespace joyson_glove;
 
 int main() {
-    GloveSDK sdk;
-    sdk.initialize();
+    // Configure UDP client
+    UdpConfig udp_config;
+    udp_config.server_ip = "192.168.10.123";
+    udp_config.server_port = 8080;
+    udp_config.local_port = 8080;
 
-    // Set to servo mode
-    sdk.motor_controller().set_all_modes(MODE_SERVO);
+    auto udp_client = std::make_shared<UdpClient>(udp_config);
+    if (!udp_client->connect()) return 1;
 
-    // 50Hz control loop (20ms update rate)
-    for (int i = 0; i < 500; ++i) {
-        auto start = std::chrono::steady_clock::now();
+    // Create motor controller independently
+    MotorControllerConfig motor_config;
+    motor_config.auto_start_thread = false;
 
-        // Calculate target positions
-        std::array<uint16_t, NUM_MOTORS> targets;
-        for (size_t j = 0; j < NUM_MOTORS; ++j) {
-            targets[j] = 1000 + 500 * std::sin(i * 0.1);
-        }
+    MotorController motor(udp_client, motor_config);
+    motor.initialize();
 
-        // Send commands
-        sdk.set_all_positions(targets);
-
-        // Sleep to maintain 50Hz
-        auto elapsed = std::chrono::steady_clock::now() - start;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20) - elapsed);
+    // Direct blocking read
+    auto status = motor.get_motor_status(1);
+    if (status) {
+        std::cout << "Position: " << status->actual_position << std::endl;
     }
 
-    sdk.shutdown();
+    udp_client->disconnect();
     return 0;
 }
 ```
@@ -188,18 +194,25 @@ int main() {
 
 Main SDK interface providing unified API for all components.
 
-#### Initialization
+#### Initialization & Lifecycle
 
 ```cpp
 GloveSDK(const GloveConfig& config = GloveConfig{});
 bool initialize();
 void shutdown();
 bool is_initialized() const;
+
+// Unified update thread control
+void start();
+void stop();
+bool is_running() const;
 ```
 
 #### Motor Control
 
 ```cpp
+bool set_motor_mode(uint8_t motor_id, uint8_t mode);
+bool set_all_modes(uint8_t mode);
 bool set_motor_position(uint8_t motor_id, uint16_t position);
 bool set_motor_force(uint8_t motor_id, uint16_t force);
 bool set_motor_speed(uint8_t motor_id, uint16_t speed, uint16_t target_position);
@@ -222,6 +235,13 @@ bool calibrate_encoders();
 bool calibrate_imu();
 ```
 
+#### Network Statistics
+
+```cpp
+NetworkStatistics get_network_statistics();
+void reset_network_statistics();
+```
+
 #### Component Access
 
 ```cpp
@@ -229,53 +249,108 @@ MotorController& motor_controller();
 EncoderReader& encoder_reader();
 ImuReader& imu_reader();
 UdpClient& udp_client();
+const GloveConfig& get_config() const;
 ```
 
 ### Configuration
 
 ```cpp
 struct GloveConfig {
+    // Network configuration
     std::string server_ip = "192.168.10.123";
     uint16_t server_port = 8080;
+    uint16_t local_port = 8080;  // Local port to bind (required for hardware)
     std::chrono::milliseconds send_timeout{100};
     std::chrono::milliseconds receive_timeout{100};
 
-    bool auto_start_threads = true;
-    std::chrono::milliseconds motor_update_interval{10};    // 100Hz
-    std::chrono::milliseconds encoder_update_interval{10};  // 100Hz
-    std::chrono::milliseconds imu_update_interval{10};      // 100Hz
-
-    std::string encoder_calibration_file = "encoder_calibration.bin";
-    std::string imu_calibration_file = "imu_calibration.bin";
+    // Unified thread configuration
+    bool auto_start_thread = true;
+    std::chrono::milliseconds update_interval{100};  // 10Hz unified update rate
 };
+```
+
+### Data Structures
+
+#### MotorStatus
+
+```cpp
+struct MotorStatus {
+    uint8_t motor_id = 0;
+    uint16_t target_position = 0;   // Target position
+    uint16_t actual_position = 0;   // Actual position [0, 2000]
+    uint16_t actual_current = 0;    // Actual current
+    uint16_t force_value = 0;       // Force sensor value [0, 4095]
+    uint16_t force_raw = 0;         // Force sensor raw value
+    uint8_t temperature = 0;        // Temperature
+    uint8_t fault_code = 0;         // Fault code
+    std::chrono::steady_clock::time_point timestamp;
+};
+```
+
+#### NetworkStatistics
+
+```cpp
+struct NetworkStatistics {
+    uint64_t packets_sent = 0;
+    uint64_t packets_received = 0;
+    uint64_t send_errors = 0;
+    uint64_t receive_errors = 0;
+    uint64_t timeouts = 0;
+    uint64_t checksum_errors = 0;
+};
+```
+
+#### Motor Modes
+
+```cpp
+constexpr uint8_t MODE_POSITION    = 0x00;
+constexpr uint8_t MODE_SERVO       = 0x01;
+constexpr uint8_t MODE_SPEED       = 0x02;
+constexpr uint8_t MODE_FORCE       = 0x03;
+constexpr uint8_t MODE_VOLTAGE     = 0x04;
+constexpr uint8_t MODE_SPEED_FORCE = 0x05;
 ```
 
 ## Examples
 
-The SDK includes three example programs:
+The SDK includes five example programs:
 
-1. **basic_motor_control**: Demonstrates basic motor control operations
-2. **read_sensors**: Shows how to read encoder and IMU data
-3. **servo_mode_demo**: High-frequency servo mode control example
+1. **basic_motor_control**: Basic motor control operations using GloveSDK
+2. **read_sensors**: Reading encoder and IMU data with background updates
+3. **test_motor_controller**: Standalone motor controller testing (direct component usage)
+4. **test_encoder_reader**: Standalone encoder reader testing with calibration
+5. **test_imu_reader**: Standalone IMU reader testing with calibration
 
 Build and run examples:
 
 ```bash
 cd build
-./examples/basic_motor_control
-./examples/read_sensors
-./examples/servo_mode_demo
+
+# High-level SDK examples
+./basic_motor_control
+./read_sensors
+
+# Standalone component tests (support optional IP/port arguments)
+./test_motor_controller [server_ip] [port]
+./test_encoder_reader [server_ip] [port]
+./test_imu_reader [server_ip] [port]
 ```
 
 ## Threading Model
 
-The SDK uses background threads for asynchronous sensor data updates:
+The SDK uses a **unified background thread** for asynchronous sensor data updates:
 
-- **Motor Status Thread**: Polls motor status at configurable rate (default 100Hz)
-- **Encoder Update Thread**: Reads encoder data at configurable rate (default 100Hz)
-- **IMU Update Thread**: Reads IMU data at configurable rate (default 100Hz)
+- **Unified Update Thread**: Polls motor status, encoder data, and IMU data in a single loop at a configurable rate (default 10Hz)
+- Thread is controlled via `start()` / `stop()` / `is_running()` on GloveSDK
+- Set `config.auto_start_thread = true` to auto-start on `initialize()`
 
-All cached data is protected by mutexes for thread safety. User calls to `get_cached_*()` methods are non-blocking and return a copy of the cached data.
+Each component also supports its own independent thread for standalone usage:
+
+- **MotorController**: `start_status_update_thread()` / `stop_status_update_thread()`
+- **EncoderReader**: `start_update_thread()` / `stop_update_thread()`
+- **ImuReader**: `start_update_thread()` / `stop_update_thread()`
+
+All cached data is protected by mutexes for thread safety. Data freshness can be monitored via `get_data_age()` / `get_status_age()` methods.
 
 ## Error Handling
 
@@ -296,9 +371,14 @@ Encoder calibration sets the current position as zero point:
 
 ```cpp
 sdk.calibrate_encoders();
-```
 
-Calibration data is automatically saved to `encoder_calibration.bin` and loaded on next initialization.
+// Or via component directly
+sdk.encoder_reader().calibrate_zero_point();
+
+// Access calibration data programmatically
+auto cal = sdk.encoder_reader().get_calibration();
+sdk.encoder_reader().set_calibration(cal);
+```
 
 ### IMU Calibration
 
@@ -306,9 +386,14 @@ IMU calibration sets the current orientation as zero:
 
 ```cpp
 sdk.calibrate_imu();
-```
 
-Calibration data is automatically saved to `imu_calibration.bin` and loaded on next initialization.
+// Or via component directly
+sdk.imu_reader().calibrate_zero_orientation();
+
+// Access calibration data programmatically
+auto cal = sdk.imu_reader().get_calibration();
+sdk.imu_reader().set_calibration(cal);
+```
 
 ## Network Statistics
 
@@ -318,8 +403,13 @@ Monitor network performance:
 auto stats = sdk.get_network_statistics();
 std::cout << "Packets sent: " << stats.packets_sent << std::endl;
 std::cout << "Packets received: " << stats.packets_received << std::endl;
+std::cout << "Send errors: " << stats.send_errors << std::endl;
+std::cout << "Receive errors: " << stats.receive_errors << std::endl;
 std::cout << "Timeouts: " << stats.timeouts << std::endl;
 std::cout << "Checksum errors: " << stats.checksum_errors << std::endl;
+
+// Reset statistics
+sdk.reset_network_statistics();
 ```
 
 ## ROS2 Integration
@@ -376,22 +466,17 @@ private:
 - Check network connection: `ping 192.168.10.123`
 - Verify hardware is powered on
 - Check firewall settings: `sudo ufw allow 8080/udp`
+- Ensure local port binding is correct: `config.local_port = 8080`
 
 ### High Packet Loss
 
 - Check network statistics: `sdk.get_network_statistics()`
-- Reduce update rate: `config.motor_update_interval = std::chrono::milliseconds(20);`
+- Reduce update rate: `config.update_interval = std::chrono::milliseconds(200);`
 - Check network bandwidth and latency
-
-### Servo Mode Not Working
-
-- Ensure update rate is ≥20ms (≤50Hz)
-- Check motor mode: `sdk.motor_controller().set_motor_mode(motor_id, MODE_SERVO)`
-- Verify no timeout errors in network statistics
 
 ## License
 
-[Add your license here]
+MIT License. See [LICENSE](LICENSE) for details.
 
 ## Contributing
 
@@ -403,4 +488,4 @@ private:
 
 ## Acknowledgments
 
-Based on the WGS communication protocol specification from Feishu documentation.
+[Add acknowledgments information here]

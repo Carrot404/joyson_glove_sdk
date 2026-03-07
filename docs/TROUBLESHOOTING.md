@@ -39,23 +39,7 @@ cd cmake-3.25.0
 ./bootstrap && make -j$(nproc) && sudo make install
 ```
 
-### 问题 2: 找不到 spdlog
-
-**错误信息**:
-```
-Could not find a package configuration file provided by "spdlog"
-```
-
-**解决方案**:
-```bash
-# 安装 spdlog
-sudo apt-get install libspdlog-dev
-
-# 或者禁用 spdlog (SDK 会使用简单的 std::cout/cerr)
-cmake -DBUILD_EXAMPLES=ON ..
-```
-
-### 问题 3: std::clamp 未定义
+### 问题 2: std::clamp 未定义
 
 **错误信息**:
 ```
@@ -194,9 +178,7 @@ std::cout << "Checksum errors: " << stats.checksum_errors << std::endl;
 2. **降低更新频率**:
 ```cpp
 GloveConfig config;
-config.motor_update_interval = std::chrono::milliseconds(20);  // 50Hz
-config.encoder_update_interval = std::chrono::milliseconds(20);
-config.imu_update_interval = std::chrono::milliseconds(20);
+config.update_interval = std::chrono::milliseconds(200);  // 5Hz
 ```
 
 3. **检查网络质量**:
@@ -541,7 +523,9 @@ assert(sdk.is_initialized());
 2. **查看示例代码**:
    - examples/basic_motor_control.cpp
    - examples/read_sensors.cpp
-   - examples/servo_mode_demo.cpp
+   - examples/test_motor_controller.cpp
+   - examples/test_encoder_reader.cpp
+   - examples/test_imu_reader.cpp
 
 3. **运行测试**:
 ```bash
@@ -562,4 +546,4 @@ ctest --output-on-failure
 
 ---
 
-**最后更新**: 2026-02-27
+**最后更新**: 2026-03-07
